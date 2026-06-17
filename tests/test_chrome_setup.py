@@ -1,6 +1,7 @@
 import importlib.util
 import csv
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -236,6 +237,25 @@ class ChromeSetupTests(unittest.TestCase):
         self.assertEqual(rows[0]["salary_source"], "api")
         self.assertEqual(rows[0]["skill_tags"], "Python | LLM")
         self.assertEqual(rows[0]["jd"], "Build AI agents")
+
+    def test_scrape_details_final_save_handles_bare_filename(self):
+        """--detail-output 传不带目录的裸文件名时，最终保存不应崩溃。
+
+        空 jobs 列表不触发 CDP，可直接走到最终保存逻辑；此前最终保存用
+        os.makedirs(os.path.dirname(path))，dirname 为空字符串会抛
+        FileNotFoundError，丢掉收尾保存和 CSV 导出。
+        """
+        module = load_module()
+        with tempfile_profile() as paths:
+            workdir = paths["cdp_profile"]
+            workdir.mkdir(parents=True, exist_ok=True)
+            cwd = os.getcwd()
+            os.chdir(workdir)
+            try:
+                module.scrape_details({"jobs": []}, output_path="boss_details.json")
+                self.assertTrue((workdir / "boss_details.json").exists())
+            finally:
+                os.chdir(cwd)
 
     def test_setup_defaults_do_not_copy_cookies_or_kill_all_chrome(self):
         module = load_module()

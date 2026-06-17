@@ -1104,8 +1104,8 @@ def scrape_details(list_data, max_details=None, output_path=None,
         print(f"  等待 {gap:.0f}s 后抓下一个...\n")
         time.sleep(gap)
 
-    # 最终保存
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    # 最终保存（dirname 为空时回退到当前目录，与循环内/其它写文件处保持一致）
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     print(f"\n详情已保存: {output_path}")
