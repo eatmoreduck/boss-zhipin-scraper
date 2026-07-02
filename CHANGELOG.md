@@ -3,6 +3,7 @@
 ## 未发布
 
 ### 修复
+- 同步 BOSS 当前 `city.json` / `condition.json` 映射，修正城市码以及薪资、经验、学历筛选枚举漂移，并在内置城市表未命中时自动加载 BOSS `cityGroup.json` 支持更多城市中文名
 - `scrape_details` 最终保存改用 `os.path.dirname(path) or "."`，`--detail-output` 传不带目录的裸文件名时不再抛 `FileNotFoundError`（与循环内及其它写文件处保持一致）
 - 修正城市码：天津 `101030100`、沈阳 `101070100`（原均误用 `101060100`）
 - `require_runtime_dependencies` 缺失依赖时同时提示 uv 和 pip 安装方式

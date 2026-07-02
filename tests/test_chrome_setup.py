@@ -47,6 +47,100 @@ class ChromeSetupTests(unittest.TestCase):
         self.assertEqual(module.DEFAULT_CITY_INPUT, "上海")
         self.assertEqual(module.resolve_city(module.DEFAULT_CITY_INPUT), ("上海", "101020100"))
 
+    def test_city_map_matches_current_boss_city_snapshot(self):
+        module = load_module()
+
+        expected = {
+            "全国": "100010000",
+            "北京": "101010100",
+            "上海": "101020100",
+            "广州": "101280100",
+            "深圳": "101280600",
+            "杭州": "101210100",
+            "成都": "101270100",
+            "西安": "101110100",
+            "重庆": "101040100",
+            "南京": "101190100",
+            "长沙": "101250100",
+            "福州": "101230100",
+            "武汉": "101200100",
+            "合肥": "101220100",
+            "济南": "101120100",
+            "大连": "101070200",
+            "青岛": "101120200",
+            "宁波": "101210400",
+            "厦门": "101230200",
+            "天津": "101030100",
+            "苏州": "101190400",
+            "郑州": "101180100",
+            "东莞": "101281600",
+            "佛山": "101280800",
+            "沈阳": "101070100",
+        }
+
+        self.assertEqual(module.CITY_MAP, expected)
+        for name, code in expected.items():
+            self.assertEqual(module.resolve_city(name), (name, code))
+            self.assertEqual(module.resolve_city(code), (name, code))
+
+    def test_resolve_city_uses_live_city_map_for_non_static_city(self):
+        module = load_module()
+
+        with mock.patch.object(
+            module,
+            "load_live_city_maps",
+            return_value=(
+                {"长春": "101060100"},
+                {"101060100": "长春"},
+            ),
+            create=True,
+        ):
+            self.assertEqual(module.resolve_city("长春"), ("长春", "101060100"))
+            self.assertEqual(module.resolve_city("101060100"), ("长春", "101060100"))
+
+    def test_filter_maps_match_current_boss_condition_snapshot(self):
+        module = load_module()
+
+        self.assertEqual(
+            module.SALARY_MAP,
+            {
+                "不限": "0",
+                "3K以下": "402",
+                "3-5K": "403",
+                "5-10K": "404",
+                "10-20K": "405",
+                "20-50K": "406",
+                "50K以上": "407",
+            },
+        )
+        self.assertEqual(
+            module.EXPERIENCE_MAP,
+            {
+                "不限": "0",
+                "在校生": "108",
+                "应届生": "102",
+                "经验不限": "101",
+                "1年以内": "103",
+                "1-3年": "104",
+                "3-5年": "105",
+                "5-10年": "106",
+                "10年以上": "107",
+            },
+        )
+        self.assertEqual(
+            module.DEGREE_MAP,
+            {
+                "不限": "0",
+                "初中及以下": "209",
+                "中专/中技": "208",
+                "高中": "206",
+                "大专": "202",
+                "本科": "203",
+                "硕士": "204",
+                "博士": "205",
+            },
+        )
+
     def test_login_probe_requires_plaintext_salary(self):
         module = load_module()
 

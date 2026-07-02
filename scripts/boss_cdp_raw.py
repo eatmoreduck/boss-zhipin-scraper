@@ -40,6 +40,7 @@ import ntpath
 from datetime import datetime
 from collections import Counter
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
+from urllib.request import Request, urlopen
 
 websocket = None
 requests = None
@@ -53,6 +54,8 @@ DEFAULT_CDP_PORT = 9222
 
 # API 基础路径（便于统一修改）
 API_JOB_LIST_PATH = "/wapi/zpgeek/search/joblist.json"
+HOT_CITY_URL = "https://www.zhipin.com/wapi/zpgeek/search/job/hot/city.json"
+CITY_GROUP_URL = "https://www.zhipin.com/wapi/zpCommon/data/cityGroup.json"
 
 # 请求频率保护
 MAX_PAGES = 10          # 单次最大页数
@@ -115,6 +118,7 @@ DEFAULT_LOGIN_TIMEOUT = 300
 
 # 全局请求计数器
 _request_counter = 0
+_live_city_maps_cache = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -156,15 +160,19 @@ def require_runtime_dependencies(*names):
 
 # ============================================================
 # 筛选参数映射
+# Source snapshots:
+# - 城市: https://www.zhipin.com/wapi/zpgeek/search/job/hot/city.json + cityGroup.json
+# - 筛选项: https://www.zhipin.com/wapi/zpgeek/search/job/condition.json
 # ============================================================
 CITY_MAP = {
+    "全国": "100010000",
     "北京": "101010100", "上海": "101020100", "广州": "101280100",
-    "深圳": "101280600", "杭州": "101210100", "成都": "101250100",
-    "西安": "101110100", "重庆": "101040100", "南京": "101200100",
-    "长沙": "101190100", "福州": "101300100", "武汉": "101170100",
-    "合肥": "101230100", "济南": "101240100", "大连": "101150100",
-    "青岛": "101160100", "宁波": "101180100", "厦门": "101190200",
-    "天津": "101030100", "苏州": "101190400", "郑州": "101140100",
+    "深圳": "101280600", "杭州": "101210100", "成都": "101270100",
+    "西安": "101110100", "重庆": "101040100", "南京": "101190100",
+    "长沙": "101250100", "福州": "101230100", "武汉": "101200100",
+    "合肥": "101220100", "济南": "101120100", "大连": "101070200",
+    "青岛": "101120200", "宁波": "101210400", "厦门": "101230200",
+    "天津": "101030100", "苏州": "101190400", "郑州": "101180100",
     "东莞": "101281600", "佛山": "101280800", "沈阳": "101070100",
 }
 
@@ -179,18 +187,19 @@ STAGE_MAP = {
 }
 
 SALARY_MAP = {
-    "不限": "0", "2K以下": "401", "2-5K": "402", "5-10K": "403",
-    "10-15K": "404", "15-20K": "405", "20-50K": "406", "50K以上": "407",
+    "不限": "0", "3K以下": "402", "3-5K": "403", "5-10K": "404",
+    "10-20K": "405", "20-50K": "406", "50K以上": "407",
 }
 
 EXPERIENCE_MAP = {
-    "在校生": "101", "应届": "102", "1年以内": "103", "1-3年": "104",
+    "不限": "0", "在校生": "108", "应届生": "102", "经验不限": "101",
+    "1年以内": "103", "1-3年": "104",
     "3-5年": "105", "5-10年": "106", "10年以上": "107",
 }
 
 DEGREE_MAP = {
-    "初中及以下": "201", "中专/中技": "202", "高中": "203",
-    "大专": "204", "本科": "205", "硕士": "206", "博士": "207",
+    "不限": "0", "初中及以下": "209", "中专/中技": "208", "高中": "206",
+    "大专": "202", "本科": "203", "硕士": "204", "博士": "205",
 }
 
 INDUSTRY_MAP = {
@@ -409,11 +418,52 @@ EXTRACT_DETAIL_JS = """
 # ============================================================
 # 解析城市参数（支持中文和代码）
 # ============================================================
+def fetch_boss_json(url, timeout=10):
+    req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def load_live_city_maps(timeout=10):
+    global _live_city_maps_cache
+    if _live_city_maps_cache is not None:
+        return _live_city_maps_cache
+
+    name_to_code = {}
+
+    try:
+        hot_city_data = fetch_boss_json(HOT_CITY_URL, timeout=timeout)
+        for item in hot_city_data.get("zpData", {}).get("hotCityList", []):
+            name = item.get("name")
+            code = item.get("code")
+            if name and code is not None:
+                name_to_code[name] = str(code)
+
+        city_group_data = fetch_boss_json(CITY_GROUP_URL, timeout=timeout)
+        for group in city_group_data.get("zpData", {}).get("cityGroup", []):
+            for item in group.get("cityList", []):
+                name = item.get("name")
+                code = item.get("code")
+                if name and code is not None:
+                    name_to_code.setdefault(name, str(code))
+    except (OSError, json.JSONDecodeError, ValueError) as e:
+        log.debug(f"加载 BOSS 城市映射失败，使用内置城市映射: {e}")
+
+    code_to_name = {code: name for name, code in name_to_code.items()}
+    _live_city_maps_cache = name_to_code, code_to_name
+    return _live_city_maps_cache
+
+
 def resolve_city(city_input):
     if city_input in CITY_MAP:
         return city_input, CITY_MAP[city_input]
     if city_input in CITY_R:
         return CITY_R[city_input], city_input
+    live_city_map, live_city_reverse = load_live_city_maps()
+    if city_input in live_city_map:
+        return city_input, live_city_map[city_input]
+    if city_input in live_city_reverse:
+        return live_city_reverse[city_input], city_input
     return city_input, city_input
 
 
@@ -1734,9 +1784,9 @@ def main():
 筛选参数示例:
   --scale 305          公司规模 (301=0-20人 302=20-99 303=100-499 304=500-999 305=1000-9999 306=10000+)
   --stage 807          融资阶段 (801=未融资 ... 807=已上市 808=不需要融资)
-  --salary 406         薪资范围 (401=2K以下 402=2-5K 403=5-10K 404=10-15K 405=15-20K 406=20-50K 407=50K+)
-  --experience 105     经验要求 (101=在校 102=应届 103=1年以内 104=1-3年 105=3-5年 106=5-10年 107=10年+)
-  --degree 205         学历要求 (204=大专 205=本科 206=硕士 207=博士)
+  --salary 406         薪资范围 (402=3K以下 403=3-5K 404=5-10K 405=10-20K 406=20-50K 407=50K+)
+  --experience 105     经验要求 (108=在校生 102=应届生 101=经验不限 103=1年以内 104=1-3年 105=3-5年 106=5-10年 107=10年+)
+  --degree 203         学历要求 (209=初中及以下 208=中专/中技 206=高中 202=大专 203=本科 204=硕士 205=博士)
   --industry 1001      行业 (1001=互联网 1002=电商 1003=金融 ...)
 
 城市支持中文: --city 上海  或代码: --city 101020100
