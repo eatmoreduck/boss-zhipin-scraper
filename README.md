@@ -1,11 +1,13 @@
-# BOSS直聘职位抓取工具 v2.0
+# BOSS直聘爬虫 · 职位抓取工具 v2.0（Chrome CDP / 明文薪资）
+
+> 🌐 English documentation: [README.en.md](./README.en.md)
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)
 ![Version](https://img.shields.io/badge/version-2.0.0-orange.svg)
 
-通过 Chrome CDP 协议抓取 BOSS直聘职位数据的命令行工具 + Hermes Agent Skill。
+一个轻量的 **BOSS直聘爬虫（spider / crawler / scraper）**：通过 Chrome DevTools Protocol 连接本地已登录的 Chrome，复用真实登录态调用 zhipin.com 搜索 API，绕过前端字体反爬，输出含**明文薪资**的职位数据（JSON / CSV），并生成薪资分布、技能词频和求职材料优化提示词。同时作为 Hermes Agent Skill 提供。
 
 > 📌 **一句话介绍**：不用 Selenium/Playwright，直接通过 Chrome DevTools Protocol 连接本地已登录的 Chrome，复用真实登录态调搜索 API，输出含明文薪资的 JSON/CSV，并生成薪资分布、技能词频和求职材料优化提示词。
 
@@ -45,6 +47,15 @@ python3 scripts/job_summary.py
 - 一键环境检查 + 持久隔离 Chrome CDP profile
 - 多维筛选（规模、融资、薪资、经验、学历、行业）
 - macOS + Linux 支持（Windows 代码分支已预留，未经实测，不保证可用）
+
+<details>
+<summary>🔍 为什么不选 Selenium / Playwright 类爬虫？</summary>
+
+- Selenium/Playwright 会启动完整的受控浏览器，体积大、指纹明显，容易触发 BOSS 的风控和验证码。
+- 本工具直接连接你已经登录的真实 Chrome（CDP），复用真实指纹和登录态，调用的也是页面内合法的搜索 API，返回的 `salaryDesc` 本就是明文——不需要解析被字体反爬加密的 DOM 薪资。
+- 因此比传统 DOM 抓取类爬虫更稳定，也更难被识别为自动化流量。
+
+</details>
 
 ## 安装
 
@@ -192,6 +203,8 @@ boss-zhipin-scraper/
 ```
 
 ## 工作原理
+
+这是一个基于 Chrome CDP 的 BOSS直聘爬虫，核心流程：
 
 1. 通过 Chrome DevTools Protocol (CDP) 连接到已打开的 Chrome
 2. 在 BOSS直聘页面内注入 JS，用同步 XHR 调用搜索 API
