@@ -31,6 +31,9 @@ htmlcov/
 # Project-generated local files
 docs/
 
+# Local skill tooling config (baoyu-image-gen etc.)
+.baoyu-skills/
+
 # Editor and OS files
 .idea/
 .vscode/
