@@ -247,6 +247,10 @@ python3 scripts/boss_cdp_raw.py --setup-chrome --reset-chrome-profile
 
 MIT
 
+## Friends
+
+- [LINUX DO](https://linux.do/) — A sincere, friendly, and vibrant tech community. This project endorses and recommends it.
+
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=eatmoreduck/boss-zhipin-scraper&type=Date)](https://star-history.com/#eatmoreduck/boss-zhipin-scraper&Date)

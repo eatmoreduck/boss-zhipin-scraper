@@ -248,6 +248,10 @@ python3 scripts/boss_cdp_raw.py --setup-chrome --reset-chrome-profile
 
 MIT
 
+## 友情链接
+
+- [LINUX DO](https://linux.do/) — 真诚、友善、充满活力的技术社区，本项目认可并推荐。
+
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=eatmoreduck/boss-zhipin-scraper&type=Date)](https://star-history.com/#eatmoreduck/boss-zhipin-scraper&Date)
