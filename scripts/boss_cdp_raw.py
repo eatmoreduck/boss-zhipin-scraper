@@ -1091,8 +1091,9 @@ def scrape_details(list_data, max_details=None, output_path=None,
         incr_request()
 
         # 每个详情页用新 session 避免检测
+        # background=True：后台创建标签页，不抢占前台焦点，避免抓取时反复弹窗
         ws = CDPSession(cdp_port)
-        r = ws.send("Target.createTarget", {"url": "about:blank"})
+        r = ws.send("Target.createTarget", {"url": "about:blank", "background": True})
         tid = r["result"]["targetId"]
         r = ws.send("Target.attachToTarget", {"targetId": tid, "flatten": True})
         sid = r["result"]["sessionId"]
