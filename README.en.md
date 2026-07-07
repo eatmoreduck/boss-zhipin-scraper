@@ -13,6 +13,12 @@ A lightweight **BOSS Zhipin scraper / crawler** (a.k.a. spider) for job listings
 
 ---
 
+## ⚠️ Disclaimer
+
+This project is for **learning and technical research purposes only**. It is intended to explore Chrome DevTools Protocol, front-end anti-scraping mechanisms, and data-collection techniques. Do **not** use it for any purpose that violates the [BOSS Zhipin Terms of Service](https://www.zhipin.com/about/protocol.html) or applicable laws and regulations, including commercial resale, malicious scraping, or any activity that imposes undue load on the target site. Users are solely responsible for the consequences of using this project; the author is not liable for any misuse.
+
+---
+
 ## 🚀 30-Second Quick Start
 
 ```bash
