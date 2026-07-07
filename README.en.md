@@ -240,3 +240,7 @@ python3 scripts/boss_cdp_raw.py --setup-chrome --reset-chrome-profile
 ## License
 
 MIT
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=eatmoreduck/boss-zhipin-scraper&type=Date)](https://star-history.com/#eatmoreduck/boss-zhipin-scraper&Date)
