@@ -244,6 +244,10 @@ python3 scripts/boss_cdp_raw.py --setup-chrome --copy-login-state
 python3 scripts/boss_cdp_raw.py --setup-chrome --reset-chrome-profile
 ```
 
+## 📌 TODO
+
+- [ ] 详情页抓取补强 Referer 与请求指纹，进一步降低风控触发概率
+
 ## License
 
 MIT

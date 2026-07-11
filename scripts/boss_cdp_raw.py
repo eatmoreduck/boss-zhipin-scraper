@@ -1098,6 +1098,18 @@ def scrape_details(list_data, max_details=None, output_path=None,
         r = ws.send("Target.attachToTarget", {"targetId": tid, "flatten": True})
         sid = r["result"]["sessionId"]
 
+        # background 标签页 document.hidden=true、visibilityState=hidden，
+        # BOSS直聘据此判定为非真人浏览而拒绝渲染/重定向到登录页。
+        # 在导航前注入，覆盖可见性属性为 visible，骗过 visibility 反爬。
+        ws.send("Page.addScriptToEvaluateOnNewDocument", {
+            "source": (
+                "Object.defineProperty(document, 'hidden', {get: () => false});"
+                "Object.defineProperty(document, 'visibilityState', {get: () => 'visible'});"
+                "Object.defineProperty(document, 'webkitHidden', {get: () => false});"
+                "Object.defineProperty(document, 'webkitVisibilityState', {get: () => 'visible'});"
+            )
+        }, sid)
+
         detail_url = build_detail_url(job)
         ws.send("Page.navigate", {"url": detail_url}, sid)
         print(f"  加载页面...")
