@@ -243,6 +243,10 @@ python3 scripts/boss_cdp_raw.py --setup-chrome --copy-login-state
 python3 scripts/boss_cdp_raw.py --setup-chrome --reset-chrome-profile
 ```
 
+## 📌 TODO
+
+- [ ] Strengthen the detail-page `Referer` and request fingerprinting to further reduce risk-control triggers
+
 ## License
 
 MIT

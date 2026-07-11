@@ -40,3 +40,6 @@ docs/
 .DS_Store
 ._*
 Thumbs.db
+
+# 覆盖全局 gitignore 对 AGENTS.md 的忽略，本项目需要提交
+!AGENTS.md
