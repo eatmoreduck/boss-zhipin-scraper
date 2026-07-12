@@ -1,11 +1,11 @@
-# BOSS直聘爬虫 · 职位抓取工具 v2.0（Chrome CDP / 明文薪资）
+# BOSS直聘爬虫 · 职位抓取工具 v2.1（Chrome CDP / 明文薪资）
 
 > 🌐 English documentation: [README.en.md](./README.en.md)
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)
-![Version](https://img.shields.io/badge/version-2.0.0-orange.svg)
+![Version](https://img.shields.io/badge/version-2.1.0-orange.svg)
 
 一个轻量的 **BOSS直聘爬虫（spider / crawler / scraper）**：通过 Chrome DevTools Protocol 连接本地已登录的 Chrome，复用真实登录态调用 zhipin.com 搜索 API，绕过前端字体反爬，输出含**明文薪资**的职位数据（JSON / CSV），并生成薪资分布、技能词频和求职材料优化提示词。同时作为 Hermes Agent Skill 提供。
 
@@ -166,6 +166,8 @@ python3 scripts/job_summary.py --top 15
 | `--reset-chrome-profile` | 重建 BOSS 专用 Chrome profile，会清除此专用浏览器内的登录态 |
 | `--no-wait-login` | `--setup-chrome` 启动后不等待登录完成 |
 | `--login-timeout` | `--setup-chrome` 等待登录完成的秒数（默认 300） |
+| `--stop-chrome` | 关闭 BOSS 专用 CDP Chrome（按隔离 profile 精准匹配，不碰主 Chrome） |
+| `--close-chrome` | 抓取正常结束后自动关闭专用 Chrome（默认不关；异常退出不触发，保留登录态） |
 | `--output` | 列表输出路径（默认 `~/.boss-zhipin-scraper/job-result/`） |
 | `--detail-output` | 详情输出路径（默认 `~/.boss-zhipin-scraper/job-result/`） |
 | `--cdp-port` | CDP 端口（默认 9222） |
@@ -251,6 +253,24 @@ python3 scripts/boss_cdp_raw.py --setup-chrome --copy-login-state
 ```bash
 python3 scripts/boss_cdp_raw.py --setup-chrome --reset-chrome-profile
 ```
+
+### 用完如何收尾
+
+抓取/分析结束后，专用 Chrome 不会自动关闭（默认保留登录态，方便你接着跑下一条抓取）。确认不再使用时，可以手动收尾：
+
+```bash
+python3 scripts/boss_cdp_raw.py --stop-chrome
+```
+
+`--stop-chrome` 只关闭 scraper 隔离 profile（`--user-data-dir`）对应的 Chrome 进程，**绝不**按端口或进程名去 kill，因此不会误伤你正在用的主 Chrome、Gmail、GitHub 等账号。
+
+如果你希望某次抓取正常结束后就顺手关掉 Chrome，可以加 `--close-chrome`：
+
+```bash
+python3 scripts/boss_cdp_raw.py --keyword "AI Agent" --city 上海 --pages 3 --close-chrome
+```
+
+`--close-chrome` 默认不开启；且只在抓取走完的**成功路径**上触发，登录失败、异常退出等情况不会关闭 Chrome，登录态得以保留。
 
 ## 📌 TODO
 

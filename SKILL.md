@@ -1,7 +1,7 @@
 ---
 name: boss-zhipin-scraper
 description: "Scrape BOSS直聘 (job listing site) via Chrome CDP. Searches jobs by keyword/city/filters, fetches JD details, outputs structured JSON/CSV with plaintext salary, and can summarize scraped results into a job-market prompt. Use when user wants to search/analyze jobs on BOSS直聘 or zhipin.com."
-version: 2.0.0
+version: 2.1.0
 author: eatmoreduck
 license: MIT
 platforms: [macos, linux]
@@ -10,7 +10,7 @@ metadata:
     tags: [scraper, jobs, career, cdp, chrome, zhipin, boss直聘]
 ---
 
-# BOSS直聘职位抓取工具 v2.0
+# BOSS直聘职位抓取工具 v2.1
 
 通过 Chrome CDP 协议抓取 BOSS直聘 (zhipin.com) 职位数据，输出结构化 JSON/CSV（含明文薪资），并可对已抓取结果生成聚合摘要和求职材料优化提示词。
 
@@ -121,6 +121,18 @@ python3 "$SCRIPT_PATH" --keyword "关键词" --city 北京 --pages 3 --merge ~/.
 
 默认输出到 `~/.boss-zhipin-scraper/job-result/` 目录，`--format csv` 会给列表和详情都额外生成 `.csv` 文件。`--smoke-test` 只验证真实 Chrome/CDP 能否拿到 API 明文薪资，不写结果文件。
 
+抓取结束后专用 Chrome 不会自动关闭（默认保留登录态，方便连跑多条）。确认不再使用时收尾：
+
+```bash
+# 关闭 BOSS 专用 Chrome（只关隔离 profile，不碰主 Chrome）
+python3 "$SCRIPT_PATH" --stop-chrome --cdp-port 9222
+
+# 或：让本次抓取正常结束就自动关闭
+python3 "$SCRIPT_PATH" --keyword "关键词" --city 城市 --pages 3 --close-chrome
+```
+
+`--stop-chrome` 按 `--user-data-dir` 精准匹配，绝不按端口/进程名 kill，因此不会误伤用户主 Chrome。`--close-chrome` 默认关闭，且只在抓取成功路径触发，异常/登录失败不关闭以保留登录态。
+
 摘要脚本只读取 `boss_jobs_*.json` 和 `boss_details_*.json`，不读取本地简历文件，不引入 PDF 依赖，也不给个人与岗位做分数判断。需要指定文件时使用：
 
 ```bash
@@ -152,6 +164,8 @@ python3 "$SUMMARY_PATH" \
 | `--reset-chrome-profile` | 关闭 | 重建 BOSS 专用 profile，会清除此专用浏览器登录态 |
 | `--no-wait-login` | 关闭 | `--setup-chrome` 启动后不等待 BOSS 登录完成 |
 | `--login-timeout` | 300 | `--setup-chrome` 等待登录完成的秒数 |
+| `--stop-chrome` | 关闭 | 关闭 BOSS 专用 CDP Chrome（按隔离 profile 精准匹配，不碰主 Chrome） |
+| `--close-chrome` | 关闭 | 抓取正常结束后自动关闭专用 Chrome（默认不关；异常退出不触发，保留登录态） |
 | `--check` | 关闭 | 环境检查 |
 | `--smoke-test` | 关闭 | 真实 Chrome/CDP 搜索 API smoke test，不写结果文件 |
 | `--version` | - | 查看版本号 |

@@ -692,6 +692,90 @@ class ChromeSetupTests(unittest.TestCase):
                 self.assertEqual(module.chrome_user_data_dirs_for_cdp_port(9333), [str(paths["cdp_profile"])])
                 self.assertTrue(module.cdp_port_uses_profile(9333, str(paths["cdp_profile"])))
 
+    def test_stop_cdp_chrome_terminates_only_matching_profile(self):
+        module = load_module()
+
+        terminated = []
+        # chrome_pids_for_user_data_dir 第一次返回 scraper profile 的 pid（111），
+        # SIGTERM 后轮询返回空 -> 成功关闭，不升级 SIGKILL。
+        # （按 user-data-dir 过滤出 111、不关其它 profile 的进程，该过滤逻辑由
+        #   test_chrome_process_parsing_matches_unquoted_user_data_dir 独立覆盖）
+        pid_lookups = iter([[111], []])
+        with mock.patch.object(module, "chrome_pids_for_user_data_dir",
+                               side_effect=lambda _dir: next(pid_lookups)), \
+             mock.patch.object(module, "terminate_process",
+                               side_effect=lambda pid, force=False: terminated.append((pid, force))), \
+             mock.patch.object(module.time, "sleep"):
+            stopped = module.stop_cdp_chrome("/fake/scraper-profile")
+
+        self.assertEqual(stopped, 1)
+        # 只对 scraper 的 pid 用 SIGTERM（force=False），且只一次
+        self.assertEqual(terminated, [(111, False)])
+
+    def test_stop_cdp_chrome_no_processes_returns_zero(self):
+        module = load_module()
+
+        with mock.patch.object(module, "chrome_pids_for_user_data_dir", return_value=[]):
+            stopped = module.stop_cdp_chrome("/fake/scraper-profile")
+        self.assertEqual(stopped, 0)
+
+    def test_stop_cdp_chrome_escalates_to_force_kill(self):
+        module = load_module()
+
+        terminated = []
+        # SIGTERM 后进程始终在 -> 轮询 10 次都不为空 -> 升级 SIGKILL
+        with mock.patch.object(module, "chrome_pids_for_user_data_dir", return_value=[333]), \
+             mock.patch.object(module, "terminate_process",
+                               side_effect=lambda pid, force=False: terminated.append((pid, force))), \
+             mock.patch.object(module.time, "sleep"):
+            stopped = module.stop_cdp_chrome("/fake/scraper-profile")
+
+        self.assertEqual(stopped, 1)
+        # 先 SIGTERM（force=False），10 次轮询后升级 SIGKILL（force=True）
+        self.assertIn((333, False), terminated)
+        self.assertIn((333, True), terminated)
+        self.assertLess(terminated.index((333, False)), terminated.index((333, True)))
+
+    def test_run_stop_chrome_closes_dedicated_profile(self):
+        module = load_module()
+
+        with tempfile_profile() as paths:
+            scraper_dir = str(paths["cdp_profile"])
+            captured = {}
+
+            def fake_prepare(**kwargs):
+                # run_stop_chrome 必须以 copy_login_state=False, reset=False 调用（只定位，不动 profile）
+                captured["prepare_kwargs"] = kwargs
+                return {"path": scraper_dir, "copied": 0, "reset": False, "copy_login_state": False}
+
+            def fake_stop(directory):
+                captured["stopped_dir"] = directory
+                return 1
+
+            with mock.patch.object(module, "require_runtime_dependencies", return_value=True), \
+                 mock.patch.object(module, "prepare_cdp_profile", side_effect=fake_prepare), \
+                 mock.patch.object(module, "stop_cdp_chrome", side_effect=fake_stop):
+                rc = module.run_stop_chrome()
+
+            self.assertEqual(rc, 0)
+            # 只定位 profile，绝不复制登录态 / 重置
+            self.assertEqual(captured["prepare_kwargs"], {"copy_login_state": False, "reset": False})
+            # 关的就是 scraper 隔离 profile 目录
+            self.assertEqual(captured["stopped_dir"], scraper_dir)
+
+    def test_run_stop_chrome_returns_zero_when_no_chrome_running(self):
+        module = load_module()
+
+        with tempfile_profile() as paths:
+            scraper_dir = str(paths["cdp_profile"])
+            with mock.patch.object(module, "require_runtime_dependencies", return_value=True), \
+                 mock.patch.object(module, "prepare_cdp_profile",
+                                   return_value={"path": scraper_dir, "copied": 0,
+                                                 "reset": False, "copy_login_state": False}), \
+                 mock.patch.object(module, "stop_cdp_chrome", return_value=0):
+                rc = module.run_stop_chrome()
+            self.assertEqual(rc, 0)
+
     def test_help_does_not_require_cdp_runtime_dependencies(self):
         result = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "--help"],
@@ -705,6 +789,8 @@ class ChromeSetupTests(unittest.TestCase):
         self.assertIn("--reset-chrome-profile", result.stdout)
         self.assertIn("--no-wait-login", result.stdout)
         self.assertIn("--login-timeout", result.stdout)
+        self.assertIn("--stop-chrome", result.stdout)
+        self.assertIn("--close-chrome", result.stdout)
 
 
 class tempfile_profile:

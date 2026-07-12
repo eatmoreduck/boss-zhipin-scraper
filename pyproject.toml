@@ -1,6 +1,6 @@
 [project]
 name = "boss-zhipin-scraper"
-version = "2.0.0"
+version = "2.1.0"
 description = "BOSS直聘职位抓取工具 — Chrome CDP + API 明文薪资"
 readme = "README.md"
 license = { text = "MIT" }

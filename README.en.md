@@ -1,11 +1,11 @@
-# BOSS Zhipin Scraper · Job Crawler v2.0 (Chrome CDP / Plaintext Salary)
+# BOSS Zhipin Scraper · Job Crawler v2.1 (Chrome CDP / Plaintext Salary)
 
 > 🌐 中文文档：[README.md](./README.md)
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)
-![Version](https://img.shields.io/badge/version-2.0.0-orange.svg)
+![Version](https://img.shields.io/badge/version-2.1.0-orange.svg)
 
 A lightweight **BOSS Zhipin scraper / crawler** (a.k.a. spider) for job listings on [zhipin.com](https://www.zhipin.com). Instead of driving a heavy Selenium/Playwright browser, it connects to your **already-logged-in Chrome** via the Chrome DevTools Protocol (CDP), reuses the real session, and calls the in-page search API directly — bypassing the front-end font-based anti-scraping so you get the **plaintext salary** in every record. Output goes to JSON / CSV, plus an aggregated salary/skill analysis and a copy-paste prompt for polishing your job-application materials. Also ships as a Hermes Agent Skill.
 
@@ -164,6 +164,8 @@ python3 scripts/job_summary.py --top 15
 | `--reset-chrome-profile` | Rebuild the dedicated BOSS Chrome profile; clears the login state inside this dedicated browser |
 | `--no-wait-login` | With `--setup-chrome`, do not wait for login to finish |
 | `--login-timeout` | Seconds to wait for login under `--setup-chrome` (default 300) |
+| `--stop-chrome` | Close the dedicated BOSS CDP Chrome (matched precisely by the isolated profile; never touches your main Chrome) |
+| `--close-chrome` | Auto-close the dedicated Chrome after a scrape finishes normally (off by default; not triggered on errors, so the login state is kept) |
 | `--output` | List output path (default `~/.boss-zhipin-scraper/job-result/`) |
 | `--detail-output` | Detail output path (default `~/.boss-zhipin-scraper/job-result/`) |
 | `--cdp-port` | CDP port (default 9222) |
@@ -250,6 +252,24 @@ python3 scripts/boss_cdp_raw.py --setup-chrome --copy-login-state
 ```bash
 python3 scripts/boss_cdp_raw.py --setup-chrome --reset-chrome-profile
 ```
+
+### Tearing down when you're done
+
+After a scrape/analysis finishes, the dedicated Chrome is **not** closed automatically (the login state is kept by default so you can run the next scrape right away). When you're sure you no longer need it, tear it down manually:
+
+```bash
+python3 scripts/boss_cdp_raw.py --stop-chrome
+```
+
+`--stop-chrome` only closes the Chrome process(es) that belong to the scraper's isolated profile (`--user-data-dir`). It **never** kills by port or process name, so it cannot accidentally take down your main Chrome, Gmail, GitHub, or other signed-in sessions.
+
+If you'd rather have a particular scrape close the dedicated Chrome once it finishes normally, add `--close-chrome`:
+
+```bash
+python3 scripts/boss_cdp_raw.py --keyword "AI Agent" --city 上海 --pages 3 --close-chrome
+```
+
+`--close-chrome` is off by default, and it only fires on the **success path** of a completed scrape — login failures, crashes, and other early exits leave the Chrome running so the login state is preserved.
 
 ## 📌 TODO
 

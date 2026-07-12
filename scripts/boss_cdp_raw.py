@@ -19,7 +19,7 @@ BOSS直聘职位抓取 + 分析 — 纯 CDP raw protocol
   uv run python3 scripts/boss_cdp_raw.py --version
 """
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 import json
 import time
@@ -1991,6 +1991,32 @@ def run_setup_chrome(cdp_port=DEFAULT_CDP_PORT, copy_login_state=False,
     print(f"示例:")
     print(f"  uv run python3 scripts/boss_cdp_raw.py --keyword \"AI Agent\" --city 上海 --pages 3")
     print(f"  uv run python3 scripts/boss_cdp_raw.py --check")
+    print(f"  uv run python3 scripts/boss_cdp_raw.py --stop-chrome   # 抓完关闭专用 Chrome")
+    print()
+    return 0
+
+
+def run_stop_chrome():
+    """关闭 BOSS 专用 CDP Chrome（按隔离 user-data-dir 精准匹配，不碰主 Chrome）。"""
+    if not require_runtime_dependencies("requests"):
+        return 1
+
+    print("=" * 50)
+    print("  关闭 BOSS 专用 CDP Chrome")
+    print("=" * 50)
+    print()
+
+    # 只定位 scraper 专用 profile 目录，不复制、不重置
+    profile = prepare_cdp_profile(copy_login_state=False, reset=False)
+    cdp_data_dir = profile["path"]
+
+    stopped = stop_cdp_chrome(cdp_data_dir)
+    if stopped:
+        print(f"\n✅ 已关闭 {stopped} 个 BOSS 专用 Chrome 进程 (profile: {cdp_data_dir})")
+    else:
+        print(f"\nℹ️  没有找到运行中的 BOSS 专用 Chrome 进程 (profile: {cdp_data_dir})")
+    print()
+    print("提示：仅关闭 scraper 隔离 profile 的 Chrome，不影响你的主 Chrome。")
     print()
     return 0
 
@@ -2089,6 +2115,10 @@ def main():
                    help="--setup-chrome 启动后不等待 BOSS 登录完成")
     p.add_argument("--login-timeout", type=int, default=DEFAULT_LOGIN_TIMEOUT,
                    help=f"--setup-chrome 等待登录完成的秒数 (默认 {DEFAULT_LOGIN_TIMEOUT})")
+    p.add_argument("--stop-chrome", action="store_true",
+                   help="关闭 BOSS 专用 CDP Chrome（按隔离 profile 精准匹配，不影响主 Chrome）")
+    p.add_argument("--close-chrome", action="store_true",
+                   help="抓取正常结束后自动关闭专用 Chrome（默认不关；异常退出不触发，保留登录态）")
 
     args = p.parse_args()
 
@@ -2113,6 +2143,10 @@ def main():
             wait_login=not args.no_wait_login,
             login_timeout=args.login_timeout,
         ))
+
+    # --stop-chrome 模式（关闭 BOSS 专用 CDP Chrome，独立命令）
+    if args.stop_chrome:
+        sys.exit(run_stop_chrome())
 
     if not require_runtime_dependencies("requests", "websocket"):
         sys.exit(1)
@@ -2196,6 +2230,15 @@ def main():
         if not details:
             details = load_existing_details(args.input, args.detail_output)
         analyze(list_data, details, search_keyword=args.keyword)
+
+    # 抓取正常结束后按需收尾（仅成功路径；异常/登录失败走 sys.exit，不会触发，保留登录态）
+    if args.close_chrome:
+        profile = prepare_cdp_profile(copy_login_state=False, reset=False)
+        stopped = stop_cdp_chrome(profile["path"])
+        if stopped:
+            print(f"\n🧹 已按 --close-chrome 关闭 BOSS 专用 Chrome 进程：{stopped} 个")
+        else:
+            print(f"\nℹ️  --close-chrome 未发现运行中的 BOSS 专用 Chrome 进程")
 
 
 if __name__ == "__main__":
