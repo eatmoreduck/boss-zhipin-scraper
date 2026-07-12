@@ -41,6 +41,100 @@ class ChromeSetupTests(unittest.TestCase):
         self.assertIn("boss_jobs_", module.default_output_path("jobs"))
         self.assertIn("boss_details_", module.default_output_path("details"))
 
+    def test_create_page_session_defaults_to_background_with_visibility_override(self):
+        module = load_module()
+        cdp = mock.Mock()
+        cdp.send.side_effect = [
+            {"result": {"targetId": "target-1"}},
+            {"result": {"sessionId": "session-1"}},
+            {"result": {}},
+        ]
+
+        result = module.create_page_session(cdp)
+
+        self.assertEqual(result, ("target-1", "session-1"))
+        self.assertEqual(
+            cdp.send.call_args_list,
+            [
+                mock.call(
+                    "Target.createTarget",
+                    {"url": "about:blank", "background": True},
+                ),
+                mock.call(
+                    "Target.attachToTarget",
+                    {"targetId": "target-1", "flatten": True},
+                ),
+                mock.call(
+                    "Page.addScriptToEvaluateOnNewDocument",
+                    {"source": module.BACKGROUND_VISIBILITY_SCRIPT},
+                    "session-1",
+                ),
+            ],
+        )
+
+    def test_create_page_session_can_open_interactive_foreground_target(self):
+        module = load_module()
+        cdp = mock.Mock()
+        cdp.send.side_effect = [
+            {"result": {"targetId": "login-target"}},
+            {"result": {"sessionId": "login-session"}},
+        ]
+
+        result = module.create_page_session(
+            cdp,
+            background=False,
+        )
+
+        self.assertEqual(result, ("login-target", "login-session"))
+        self.assertEqual(
+            cdp.send.call_args_list,
+            [
+                mock.call(
+                    "Target.createTarget",
+                    {
+                        "url": "about:blank",
+                        "background": False,
+                    },
+                ),
+                mock.call(
+                    "Target.attachToTarget",
+                    {"targetId": "login-target", "flatten": True},
+                ),
+            ],
+        )
+
+    def test_wait_for_login_explicitly_uses_foreground_target(self):
+        module = load_module()
+        cdp = mock.Mock()
+        with mock.patch.object(module, "CDPSession", return_value=cdp), \
+                mock.patch.object(
+                    module,
+                    "create_page_session",
+                    return_value=("login-target", "login-session"),
+                ) as create_session, \
+                mock.patch.object(module, "probe_login_state", return_value=True):
+            self.assertTrue(module.wait_for_login(cdp_port=9333, timeout=1))
+
+        create_session.assert_called_once_with(
+            cdp,
+            background=False,
+        )
+        self.assertEqual(
+            cdp.send.call_args_list,
+            [
+                mock.call(
+                    "Page.navigate",
+                    {"url": "https://www.zhipin.com/web/user/"},
+                    "login-session",
+                ),
+                mock.call(
+                    "Target.closeTarget",
+                    {"targetId": "login-target"},
+                ),
+            ],
+        )
+        cdp.close.assert_called_once_with()
+
     def test_default_city_is_shanghai_when_not_provided(self):
         module = load_module()
 

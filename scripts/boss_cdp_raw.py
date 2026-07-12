@@ -337,6 +337,41 @@ class CDPSession:
         self.ws.close()
 
 
+BACKGROUND_VISIBILITY_SCRIPT = (
+    "Object.defineProperty(document, 'hidden', {get: () => false});"
+    "Object.defineProperty(document, 'visibilityState', {get: () => 'visible'});"
+    "Object.defineProperty(document, 'webkitHidden', {get: () => false});"
+    "Object.defineProperty(document, 'webkitVisibilityState', {get: () => 'visible'});"
+)
+
+
+def create_page_session(cdp, background=True):
+    """Create and attach an about:blank target without stealing focus by default.
+
+    Background pages report themselves as hidden, which prevents BOSS detail
+    pages from rendering reliably. Register the existing visibility override
+    before callers navigate. Interactive callers such as the login flow must
+    opt into a foreground target explicitly.
+    """
+    target = cdp.send(
+        "Target.createTarget",
+        {"url": "about:blank", "background": background},
+    )
+    target_id = target["result"]["targetId"]
+    attached = cdp.send(
+        "Target.attachToTarget",
+        {"targetId": target_id, "flatten": True},
+    )
+    session_id = attached["result"]["sessionId"]
+    if background:
+        cdp.send(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": BACKGROUND_VISIBILITY_SCRIPT},
+            session_id,
+        )
+    return target_id, session_id
+
+
 # ============================================================
 # 通过页面内 XHR 调 API 获取列表数据（明文薪资）
 # ============================================================
@@ -721,10 +756,7 @@ def check_login_state(cdp_port=DEFAULT_CDP_PORT):
     """
     try:
         cdp = CDPSession(cdp_port)
-        r = cdp.send("Target.createTarget", {"url": "about:blank"})
-        tid = r["result"]["targetId"]
-        r = cdp.send("Target.attachToTarget", {"targetId": tid, "flatten": True})
-        sid = r["result"]["sessionId"]
+        tid, sid = create_page_session(cdp)
 
         # 先导航到 BOSS直聘，确保 cookie 域名正确
         cdp.send("Page.navigate", {"url": "https://www.zhipin.com/"}, sid)
@@ -745,10 +777,12 @@ def check_login_state(cdp_port=DEFAULT_CDP_PORT):
 def wait_for_login(cdp_port=DEFAULT_CDP_PORT, timeout=DEFAULT_LOGIN_TIMEOUT, interval=3):
     """Open BOSS login page and wait until plaintext salary is available."""
     cdp = CDPSession(cdp_port)
-    r = cdp.send("Target.createTarget", {"url": "https://www.zhipin.com/web/user/"})
-    tid = r["result"]["targetId"]
-    r = cdp.send("Target.attachToTarget", {"targetId": tid, "flatten": True})
-    sid = r["result"]["sessionId"]
+    tid, sid = create_page_session(cdp, background=False)
+    cdp.send(
+        "Page.navigate",
+        {"url": "https://www.zhipin.com/web/user/"},
+        sid,
+    )
 
     deadline = time.time() + timeout
     logged_in = False
@@ -1090,10 +1124,7 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
         print(f"筛选: {' | '.join(filter_desc)}")
     print()
 
-    r = cdp.send("Target.createTarget", {"url": "about:blank"})
-    tid = r["result"]["targetId"]
-    r = cdp.send("Target.attachToTarget", {"targetId": tid, "flatten": True})
-    sid = r["result"]["sessionId"]
+    tid, sid = create_page_session(cdp)
 
     def human_scroll(cdp, sid):
         """模拟人类滚动: 随机次数、随机距离、随机停顿，偶尔回滚一点"""
@@ -1285,25 +1316,9 @@ def scrape_details(list_data, max_details=None, output_path=None,
 
         incr_request()
 
-        # 每个详情页用新 session 避免检测
-        # background=True：后台创建标签页，不抢占前台焦点，避免抓取时反复弹窗
+        # 每个详情页用新 session 避免检测；自动化 target 默认后台创建。
         ws = CDPSession(cdp_port)
-        r = ws.send("Target.createTarget", {"url": "about:blank", "background": True})
-        tid = r["result"]["targetId"]
-        r = ws.send("Target.attachToTarget", {"targetId": tid, "flatten": True})
-        sid = r["result"]["sessionId"]
-
-        # background 标签页 document.hidden=true、visibilityState=hidden，
-        # BOSS直聘据此判定为非真人浏览而拒绝渲染/重定向到登录页。
-        # 在导航前注入，覆盖可见性属性为 visible，骗过 visibility 反爬。
-        ws.send("Page.addScriptToEvaluateOnNewDocument", {
-            "source": (
-                "Object.defineProperty(document, 'hidden', {get: () => false});"
-                "Object.defineProperty(document, 'visibilityState', {get: () => 'visible'});"
-                "Object.defineProperty(document, 'webkitHidden', {get: () => false});"
-                "Object.defineProperty(document, 'webkitVisibilityState', {get: () => 'visible'});"
-            )
-        }, sid)
+        tid, sid = create_page_session(ws)
 
         detail_url = build_detail_url(job)
         ws.send("Page.navigate", {"url": detail_url}, sid)
@@ -1614,12 +1629,10 @@ def run_smoke_test(cdp_port=DEFAULT_CDP_PORT):
         cdp = CDPSession(cdp_port)
         city_name, city_code = resolve_city(DEFAULT_CITY_INPUT)
         search_url = build_search_url(LOGIN_PROBE_QUERY, city_code, 1, {})
-        r = cdp.send("Target.createTarget", {"url": search_url})
-        tid = r["result"]["targetId"]
-        r = cdp.send("Target.attachToTarget", {"targetId": tid, "flatten": True})
-        sid = r["result"]["sessionId"]
+        tid, sid = create_page_session(cdp)
 
         print(f"打开 BOSS 搜索页: {LOGIN_PROBE_QUERY} @ {city_name}")
+        cdp.send("Page.navigate", {"url": search_url}, sid)
         time.sleep(4)
         api_url = f"{API_JOB_LIST_PATH}?{urlencode({'scene': '1', 'query': LOGIN_PROBE_QUERY, 'city': city_code, 'page': 1, 'pageSize': 5})}"
         api_js = FETCH_API_JS_TEMPLATE.replace("__API_URL__", api_url)
