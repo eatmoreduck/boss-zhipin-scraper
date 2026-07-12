@@ -458,17 +458,31 @@ def _looks_like_navigation_page(text):
 
 def _recruiter_footer_start(lines):
     stripped_lines = [line.strip() for line in lines]
-    try:
-        marker_index = stripped_lines.index(DETAIL_COMPETITIVENESS_MARKER)
-    except ValueError:
-        return None
+    end = len(stripped_lines)
+    while end and not stripped_lines[end - 1]:
+        end -= 1
 
-    if marker_index < 4 or stripped_lines[marker_index - 2] != "·":
-        return None
+    def card_start(card_end):
+        while card_end and not stripped_lines[card_end - 1]:
+            card_end -= 1
+        if card_end < 4 or stripped_lines[card_end - 2] != "·":
+            return None
+        activity_or_name = stripped_lines[card_end - 4]
+        has_activity_line = (
+            activity_or_name == "在线" or activity_or_name.endswith("活跃")
+        )
+        start = card_end - 5 if has_activity_line else card_end - 4
+        return start if start >= 0 else None
 
-    activity_or_name = stripped_lines[marker_index - 4]
-    has_activity_line = activity_or_name == "在线" or activity_or_name.endswith("活跃")
-    return marker_index - 5 if has_activity_line else marker_index - 4
+    for marker in (DETAIL_COMPETITIVENESS_MARKER, DETAIL_SAFETY_MARKER):
+        try:
+            marker_index = stripped_lines.index(marker)
+        except ValueError:
+            continue
+        start = card_start(marker_index)
+        if start is not None:
+            return start
+    return card_start(end)
 
 
 def extract_job_description(extracted, min_length=MIN_DETAIL_TEXT_LENGTH):

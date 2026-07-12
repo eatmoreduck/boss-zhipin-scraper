@@ -222,6 +222,39 @@ class ChromeSetupTests(unittest.TestCase):
         self.assertIn("竞争力分析", jd)
         self.assertIn("制定差异化产品策略", jd)
 
+    def test_extract_job_description_removes_trailing_recruiter_card(self):
+        module = load_module()
+        description = "负责 AI 产品规划、需求分析和跨团队项目推进。\n" * 8
+        page_text = (
+            f"职位描述\n{description}"
+            "李女士\n在线\n示例公司\n·\n招聘专员"
+        )
+
+        jd = module.extract_job_description({"jd": page_text, "page_text": page_text})
+
+        self.assertEqual(jd, description.strip())
+        self.assertNotIn("李女士", jd)
+        self.assertNotIn("招聘专员", jd)
+
+    def test_extract_job_description_removes_recruiter_card_before_safety_footer(self):
+        module = load_module()
+        description = "负责视觉算法研发、模型部署和业务场景落地。\n" * 8
+        page_text = (
+            f"职位描述\n{description}"
+            "认证资质\n人力资源服务许可证\n"
+            "曾先生\n示例猎头\n·\n猎头顾问\n\n"
+            "BOSS 安全提示\n公司介绍\n更多职位"
+        )
+
+        jd = module.extract_job_description({"jd": page_text, "page_text": page_text})
+
+        self.assertEqual(
+            jd,
+            f"{description}认证资质\n人力资源服务许可证".strip(),
+        )
+        self.assertNotIn("曾先生", jd)
+        self.assertNotIn("猎头顾问", jd)
+
     def test_extract_job_description_rejects_navigation_page(self):
         module = load_module()
         page_text = "首页\n职位\n公司\n校园\n无障碍专区\n热门职位\n产品经理"
