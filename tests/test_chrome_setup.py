@@ -173,6 +173,68 @@ class ChromeSetupTests(unittest.TestCase):
         self.assertEqual(detail["salary"], "30-60K")
         self.assertEqual(detail["salary_source"], "api")
 
+    def test_detail_extractor_never_uses_body_text_as_jd_fallback(self):
+        module = load_module()
+
+        self.assertNotIn("jd = body.substring", module.EXTRACT_DETAIL_JS)
+        self.assertIn("page_text", module.EXTRACT_DETAIL_JS)
+        self.assertIn("text.indexOf('职位描述')", module.EXTRACT_DETAIL_JS)
+
+    def test_extract_job_description_removes_header_and_recruiter_footer(self):
+        module = load_module()
+        description = (
+            "公司介绍\n这段属于招聘方发布的岗位正文，应当保留。\n"
+            + "负责 AI 产品规划、需求分析、研发协作和上线复盘。\n" * 8
+        ).strip()
+        page_text = (
+            "微信扫码分享 举报\n职位描述\n"
+            f"{description}\n"
+            "张女士\n今日活跃\n示例公司\n·\n招聘者\n竞争力分析\n"
+            "查看完整个人竞争力\nBOSS 安全提示\n公司工商信息\n更多职位"
+        )
+
+        jd = module.extract_job_description({"jd": page_text, "page_text": page_text})
+
+        self.assertEqual(jd, description)
+        self.assertIn("公司介绍", jd)
+        self.assertNotIn("张女士", jd)
+        self.assertNotIn("竞争力分析", jd)
+
+    def test_extract_job_description_rejects_login_truncation(self):
+        module = load_module()
+        page_text = (
+            "职位描述\n负责产品规划和需求分析。\n"
+            "登录查看完整内容\n招聘者\nBOSS 安全提示"
+        )
+
+        with self.assertRaises(module.DetailLoginRequiredError):
+            module.extract_job_description({"jd": "", "page_text": page_text})
+
+    def test_extract_job_description_preserves_competitiveness_heading_in_jd(self):
+        module = load_module()
+        description = (
+            "岗位职责\n负责产品规划、需求分析和跨团队项目推进。\n"
+            "竞争力分析\n负责持续研究竞品并制定差异化产品策略。\n" * 5
+        )
+
+        jd = module.extract_job_description({"jd": f"职位描述\n{description}"})
+
+        self.assertIn("竞争力分析", jd)
+        self.assertIn("制定差异化产品策略", jd)
+
+    def test_extract_job_description_rejects_navigation_page(self):
+        module = load_module()
+        page_text = "首页\n职位\n公司\n校园\n无障碍专区\n热门职位\n产品经理"
+
+        with self.assertRaisesRegex(module.DetailExtractionError, "navigation chrome"):
+            module.extract_job_description({"jd": "", "page_text": page_text})
+
+    def test_extract_job_description_rejects_short_text(self):
+        module = load_module()
+
+        with self.assertRaisesRegex(module.DetailExtractionError, "too short"):
+            module.extract_job_description({"jd": "职位描述\n只有一句话"})
+
     def test_detail_url_adds_security_context_without_changing_job_link(self):
         module = load_module()
         job = {
@@ -350,6 +412,48 @@ class ChromeSetupTests(unittest.TestCase):
                 self.assertTrue((workdir / "boss_details.json").exists())
             finally:
                 os.chdir(cwd)
+
+    def test_scrape_details_stops_before_writing_login_truncation(self):
+        module = load_module()
+        session = mock.Mock()
+
+        def send(method, params=None, sid=None):
+            if method == "Target.createTarget":
+                return {"result": {"targetId": "target-1"}}
+            if method == "Target.attachToTarget":
+                return {"result": {"sessionId": "session-1"}}
+            return {}
+
+        session.send.side_effect = send
+        session.eval_js.side_effect = lambda script, sid: (
+            json.dumps(
+                {
+                    "jd": "",
+                    "page_text": "职位描述\n负责产品规划\n登录查看完整内容",
+                    "tags": [],
+                }
+            )
+            if script == module.EXTRACT_DETAIL_JS
+            else None
+        )
+        job = {
+            "job_id": "blocked",
+            "title": "AI Product Manager",
+            "job_link": "https://www.zhipin.com/job_detail/blocked.html",
+        }
+
+        with tempfile_profile() as paths:
+            output = paths["cdp_profile"] / "details.json"
+            with mock.patch.object(module, "CDPSession", return_value=session), \
+                    mock.patch.object(module.time, "sleep"):
+                with self.assertRaisesRegex(RuntimeError, "login expired"):
+                    module.scrape_details({"jobs": [job]}, output_path=str(output))
+
+        self.assertFalse(output.exists())
+        session.send.assert_any_call(
+            "Target.closeTarget", {"targetId": "target-1"}
+        )
+        session.close.assert_called_once()
 
     def test_setup_defaults_do_not_copy_cookies_or_kill_all_chrome(self):
         module = load_module()

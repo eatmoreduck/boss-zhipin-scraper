@@ -380,11 +380,26 @@ EXTRACT_LIST_JS = """
 """
 
 # ============================================================
-# 详情页提取 JS（过滤福利标签）
+# 详情页提取与校验
 # ============================================================
+DETAIL_LOGIN_MARKER = "登录查看完整内容"
+DETAIL_DESCRIPTION_MARKER = "职位描述"
+DETAIL_COMPETITIVENESS_MARKER = "竞争力分析"
+DETAIL_SAFETY_MARKER = "BOSS 安全提示"
+MIN_DETAIL_TEXT_LENGTH = 120
+
+
+class DetailExtractionError(ValueError):
+    """The rendered page does not contain a usable job description."""
+
+
+class DetailLoginRequiredError(DetailExtractionError):
+    """The detail page is truncated because the BOSS session is not logged in."""
+
+
 EXTRACT_DETAIL_JS = """
 (function(){
-    var body = document.body.innerText;
+    var pageText = document.body ? document.body.innerText : '';
     var tags = [];
     var benefitWords = ['五险','补充医疗','定期体检','带薪年假','年终奖','零食','餐补',
         '节日福利','加班补助','股票期权','员工旅游','交通补助','通讯补贴','团建',
@@ -406,13 +421,98 @@ EXTRACT_DETAIL_JS = """
         var t = s.innerText.trim();
         if(t && !isBenefit(t)) tags.push(t);
     });
-    var sections = document.querySelectorAll('.job-sec, .job-detail-section');
     var jd = '';
-    sections.forEach(function(s){ jd += s.innerText + '\\n'; });
-    if(!jd) jd = body.substring(0, 3000);
-    return JSON.stringify({jd: jd, tags: tags, url: location.href});
+    var sections = document.querySelectorAll('.job-detail-section, .job-sec');
+    for (var i = 0; i < sections.length; i++) {
+        var text = (sections[i].innerText || '').trim();
+        if (text.indexOf('职位描述') !== -1 && text.length > jd.length) {
+            jd = text;
+        }
+    }
+    return JSON.stringify({
+        jd: jd,
+        page_text: pageText.substring(0, 12000),
+        tags: tags,
+        url: location.href
+    });
 })()
 """
+
+
+def _normalize_detail_whitespace(text):
+    lines = [line.rstrip() for line in text.replace("\r\n", "\n").splitlines()]
+    normalized = "\n".join(lines).strip()
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    return re.sub(r"[ \t]{2,}", " ", normalized)
+
+
+def _looks_like_navigation_page(text):
+    return (
+        DETAIL_DESCRIPTION_MARKER not in text
+        and "无障碍专区" in text
+        and "首页" in text
+        and "职位" in text
+        and "公司" in text
+    )
+
+
+def _recruiter_footer_start(lines):
+    stripped_lines = [line.strip() for line in lines]
+    try:
+        marker_index = stripped_lines.index(DETAIL_COMPETITIVENESS_MARKER)
+    except ValueError:
+        return None
+
+    if marker_index < 4 or stripped_lines[marker_index - 2] != "·":
+        return None
+
+    activity_or_name = stripped_lines[marker_index - 4]
+    has_activity_line = activity_or_name == "在线" or activity_or_name.endswith("活跃")
+    return marker_index - 5 if has_activity_line else marker_index - 4
+
+
+def extract_job_description(extracted, min_length=MIN_DETAIL_TEXT_LENGTH):
+    """Return validated JD text without BOSS page chrome.
+
+    `page_text` is diagnostic input only. It is never persisted unless it has
+    an explicit job-description section that passes all checks.
+    """
+    if not isinstance(extracted, dict):
+        raise DetailExtractionError("detail extractor returned non-dict")
+
+    raw_jd = str(extracted.get("jd") or "")
+    page_text = str(extracted.get("page_text") or "")
+    diagnostic_text = "\n".join((raw_jd, page_text))
+
+    if DETAIL_LOGIN_MARKER in diagnostic_text:
+        raise DetailLoginRequiredError(
+            "detail page is truncated at the login wall; refresh the BOSS login session"
+        )
+    if _looks_like_navigation_page(diagnostic_text):
+        raise DetailExtractionError("detail page rendered navigation chrome without a JD")
+
+    text = raw_jd
+    if not text and DETAIL_DESCRIPTION_MARKER in page_text:
+        text = page_text
+    if DETAIL_DESCRIPTION_MARKER in text:
+        text = text.split(DETAIL_DESCRIPTION_MARKER, 1)[1]
+
+    lines = text.replace("\r\n", "\n").splitlines()
+    footer_start = _recruiter_footer_start(lines)
+    if footer_start is not None:
+        lines = lines[:footer_start]
+    else:
+        for index, line in enumerate(lines):
+            if line.strip() == DETAIL_SAFETY_MARKER:
+                lines = lines[:index]
+                break
+
+    jd = _normalize_detail_whitespace("\n".join(lines))
+    if len(jd) < min_length:
+        raise DetailExtractionError(
+            f"job description too short after validation: {len(jd)} < {min_length}"
+        )
+    return jd
 
 
 # ============================================================
@@ -1146,6 +1246,20 @@ def scrape_details(list_data, max_details=None, output_path=None,
             d = json.loads(val) if isinstance(val, str) else {"jd": "", "tags": []}
         except (json.JSONDecodeError, ValueError, TypeError):
             d = {"jd": "", "tags": []}
+
+        try:
+            d["jd"] = extract_job_description(d)
+        except DetailLoginRequiredError as exc:
+            ws.send("Target.closeTarget", {"targetId": tid})
+            ws.close()
+            raise RuntimeError(
+                "BOSS detail login expired; stopped before writing truncated JD data"
+            ) from exc
+        except DetailExtractionError as exc:
+            print(f"  跳过无效详情页: {exc}")
+            ws.send("Target.closeTarget", {"targetId": tid})
+            ws.close()
+            continue
 
         detail = build_detail_record(job, d)
         results.append(detail)
