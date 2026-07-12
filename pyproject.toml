@@ -33,3 +33,5 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["scripts"]
+# 城市码表 data/city_codes.json 打进 wheel，pip install 后也能读到（见 issue #24）
+force-include = { "data/city_codes.json" = "data/city_codes.json" }

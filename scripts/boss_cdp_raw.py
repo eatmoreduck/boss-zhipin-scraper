@@ -164,17 +164,56 @@ def require_runtime_dependencies(*names):
 # - 城市: https://www.zhipin.com/wapi/zpgeek/search/job/hot/city.json + cityGroup.json
 # - 筛选项: https://www.zhipin.com/wapi/zpgeek/search/job/condition.json
 # ============================================================
-CITY_MAP = {
-    "全国": "100010000",
-    "北京": "101010100", "上海": "101020100", "广州": "101280100",
-    "深圳": "101280600", "杭州": "101210100", "成都": "101270100",
-    "西安": "101110100", "重庆": "101040100", "南京": "101190100",
-    "长沙": "101250100", "福州": "101230100", "武汉": "101200100",
-    "合肥": "101220100", "济南": "101120100", "大连": "101070200",
-    "青岛": "101120200", "宁波": "101210400", "厦门": "101230200",
-    "天津": "101030100", "苏州": "101190400", "郑州": "101180100",
-    "东莞": "101281600", "佛山": "101280800", "沈阳": "101070100",
-}
+# 城市码表已外置到 data/city_codes.json（全量城市，覆盖一二三四五线），
+# 见 issue #24。resolve_city 查询链：本地静态 → 运行时拉 BOSS 接口 → 原样兜底。
+# 仓库内路径（开发态）与打包后路径（pip install）都在 _city_data_path() 里处理。
+CITY_DATA_FILENAME = "city_codes.json"
+
+_local_city_map_cache = None
+
+
+def _city_data_path():
+    """返回 data/city_codes.json 的路径，兼容仓库开发态与 pip 打包态。"""
+    # 1. 仓库开发态：脚本在 scripts/，数据在 ../data/
+    repo_data = os.path.join(os.path.dirname(__file__), "..", "data", CITY_DATA_FILENAME)
+    if os.path.isfile(repo_data):
+        return os.path.normpath(repo_data)
+    # 2. 打包态：wheel force-include 到包根 data/，用 importlib.resources 兜底
+    try:
+        from importlib.resources import files  # py3.9+
+        pkg_data = files(__package__ or "__main__").joinpath("..", "data", CITY_DATA_FILENAME) \
+            if __package__ else None
+    except Exception:
+        pkg_data = None
+    if pkg_data is not None and os.path.isfile(str(pkg_data)):
+        return str(pkg_data)
+    # 3. 找不到则返回开发态路径（让调用方决定降级）
+    return os.path.normpath(repo_data)
+
+
+def load_local_city_map():
+    """读取本地 data/city_codes.json 静态全量城市码表。
+
+    返回 (name_to_code, code_to_name) 两个字典；读取失败返回 ({}, {})。
+    结果缓存，重复调用零开销。
+    """
+    global _local_city_map_cache
+    if _local_city_map_cache is not None:
+        return _local_city_map_cache
+    name_to_code = {}
+    try:
+        path = _city_data_path()
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        if isinstance(raw, dict):
+            for name, code in raw.items():
+                if name and code is not None:
+                    name_to_code[str(name)] = str(code)
+    except (OSError, json.JSONDecodeError, ValueError) as e:
+        log.debug(f"读取本地城市码表失败: {e}")
+    code_to_name = {code: name for name, code in name_to_code.items()}
+    _local_city_map_cache = name_to_code, code_to_name
+    return _local_city_map_cache
 
 SCALE_MAP = {
     "0-20人": "301", "20-99人": "302", "100-499人": "303",
@@ -207,9 +246,6 @@ INDUSTRY_MAP = {
     "企业服务": "1005", "教育培训": "1006", "社交网络": "1007",
     "医疗健康": "1008", "生活服务": "1009", "广告营销": "1010",
 }
-
-# 反向映射（code -> 中文名）
-CITY_R = {v: k for k, v in CITY_MAP.items()}
 
 
 # ============================================================
@@ -569,16 +605,61 @@ def load_live_city_maps(timeout=10):
 
 
 def resolve_city(city_input):
-    if city_input in CITY_MAP:
-        return city_input, CITY_MAP[city_input]
-    if city_input in CITY_R:
-        return CITY_R[city_input], city_input
-    live_city_map, live_city_reverse = load_live_city_maps()
-    if city_input in live_city_map:
-        return city_input, live_city_map[city_input]
-    if city_input in live_city_reverse:
-        return live_city_reverse[city_input], city_input
+    """把「中文城市名 / 城市码」解析为 (name, code)。
+
+    查询链（逐级降级）:
+      1. 本地静态码表 data/city_codes.json（全量、离线可用）
+      2. 运行时拉 BOSS 接口 hot/city.json + cityGroup.json（自愈）
+      3. 都查不到则原样返回（兼容用户直接传裸 city code）
+    """
+    if not city_input:
+        return city_input, city_input
+
+    # 1. 本地静态码表
+    local_map, local_reverse = load_local_city_map()
+    if city_input in local_map:
+        return city_input, local_map[city_input]
+    if city_input in local_reverse:
+        return local_reverse[city_input], city_input
+
+    # 2. 运行时拉 BOSS 接口
+    live_map, live_reverse = load_live_city_maps()
+    if city_input in live_map:
+        return city_input, live_map[city_input]
+    if city_input in live_reverse:
+        return live_reverse[city_input], city_input
+
+    # 3. 兜底：原样返回
     return city_input, city_input
+
+
+def list_cities(keyword=None, use_live=True):
+    """打印支持的城市列表。keyword 非空时只打印城市名含该关键词的城市。
+
+    优先用运行时拉取的最新码表（use_live=True），拉取失败回退本地静态码表。
+    """
+    name_to_code = {}
+    if use_live:
+        live_map, _ = load_live_city_maps()
+        name_to_code.update(live_map)
+    if not name_to_code:
+        local_map, _ = load_local_city_map()
+        name_to_code.update(local_map)
+    if not name_to_code:
+        print("⚠️ 无法加载城市码表（本地静态文件缺失且网络拉取失败）")
+        return
+
+    items = sorted(name_to_code.items(), key=lambda kv: kv[0])
+    if keyword:
+        keyword = keyword.strip()
+        items = [(n, c) for n, c in items if keyword in n]
+        if not items:
+            print(f"没有匹配「{keyword}」的城市")
+            return
+    print(f"共 {len(items)} 个城市（支持中文城市名或城市码）：")
+    for name, code in items:
+        print(f"  {name}\t{code}")
+
 
 
 def is_logged_in_search_response(data):
@@ -1994,6 +2075,10 @@ def main():
     p.add_argument("--check", action="store_true", help="运行环境诊断检查")
     p.add_argument("--smoke-test", action="store_true",
                    help="用真实 Chrome/CDP 跑一次 BOSS 搜索 API smoke test（不写结果文件）")
+    p.add_argument("--list-cities", nargs="?", const="", default=None,
+                   metavar="关键词",
+                   help="打印支持的城市列表（可选关键词过滤，如 --list-cities 江）；"
+                        "支持全国城市，码表见 data/city_codes.json，运行时自动从 BOSS 同步")
     p.add_argument("--setup-chrome", action="store_true",
                    help="自动启动 Chrome CDP 调试模式")
     p.add_argument("--copy-login-state", action="store_true",
@@ -2013,6 +2098,11 @@ def main():
 
     if args.smoke_test:
         sys.exit(run_smoke_test(args.cdp_port))
+
+    # --list-cities 模式（无需 Chrome/网络依赖，本地静态码表兜底）
+    if args.list_cities is not None:
+        list_cities(keyword=args.list_cities or None)
+        sys.exit(0)
 
     # --setup-chrome 模式
     if args.setup_chrome:

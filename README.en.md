@@ -33,6 +33,11 @@ python3 scripts/boss_cdp_raw.py --setup-chrome
 # 3. Scrape + analyze
 python3 scripts/boss_cdp_raw.py --keyword "AI Agent" --city 上海 --pages 3 --analysis
 
+# Cities nationwide are supported (incl. tier-3/4/5), e.g.:
+python3 scripts/boss_cdp_raw.py --keyword "前端" --city 赣州 --pages 3
+# List supported cities: --list-cities [keyword]
+python3 scripts/boss_cdp_raw.py --list-cities 江
+
 # 4. Generate an aggregated summary + prompt after scraping (reads the latest result)
 python3 scripts/job_summary.py
 ```
@@ -143,7 +148,8 @@ python3 scripts/job_summary.py --top 15
 | Parameter | Description |
 |-----------|-------------|
 | `--keyword` | Search keyword (default "AI Agent") |
-| `--city` | City (Chinese name or code, default Shanghai) |
+| `--city` | City (Chinese name or code, default Shanghai). **Supports cities nationwide** (300+, incl. tier-3/4/5); city codes auto-sync from BOSS at runtime. See [`data/city_codes.json`](data/city_codes.json), or run `--list-cities` |
+| `--list-cities [keyword]` | Print the supported city list, optional keyword filter, e.g. `--list-cities 江` |
 | `--pages` | Number of pages (max 10) |
 | `--format` | json / csv; csv also exports list and detail CSVs |
 | `--detail` | Scrape detail-page JD (on by default) |

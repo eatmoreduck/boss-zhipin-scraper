@@ -35,6 +35,11 @@ python3 scripts/boss_cdp_raw.py --setup-chrome
 # 3. 抓取 + 分析
 python3 scripts/boss_cdp_raw.py --keyword "AI Agent" --city 上海 --pages 3 --analysis
 
+# 支持全国城市（含三四五线），例如：
+python3 scripts/boss_cdp_raw.py --keyword "前端" --city 赣州 --pages 3
+# 查看支持的城市：--list-cities [关键词]
+python3 scripts/boss_cdp_raw.py --list-cities 江
+
 # 4. 抓取后生成聚合摘要 + 提示词（默认读取最新结果）
 python3 scripts/job_summary.py
 ```
@@ -145,7 +150,8 @@ python3 scripts/job_summary.py --top 15
 | 参数 | 说明 |
 |------|------|
 | `--keyword` | 搜索关键词（默认 "AI Agent"） |
-| `--city` | 城市（中文或代码，默认上海） |
+| `--city` | 城市（中文或代码，默认上海）。**支持全国城市**（一二三四五线全覆盖，共 300+ 个），运行时自动从 BOSS 同步最新城市码；码表见 [`data/city_codes.json`](data/city_codes.json)，或用 `--list-cities` 查看 |
+| `--list-cities [关键词]` | 打印支持的城市列表，可选关键词过滤，如 `--list-cities 江` |
 | `--pages` | 页数（上限 10） |
 | `--format` | json / csv；csv 会同时导出列表和详情 CSV |
 | `--detail` | 抓取详情页 JD（默认开启） |

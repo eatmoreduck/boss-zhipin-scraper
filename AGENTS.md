@@ -11,6 +11,7 @@
 ```
 scripts/boss_cdp_raw.py   # 核心：抓取 + CLI 主入口（~1900 行，单文件）
 scripts/job_summary.py    # 抓取结果 → Markdown 求职分析摘要
+data/city_codes.json      # 全量城市码表（300+ 城市，外置；见下）
 tests/test_chrome_setup.py    # unittest，全 mock，不依赖真实 Chrome/网络
 tests/test_job_summary.py     # 摘要测试
 pyproject.toml            # hatchling 打包；入口 boss-scraper / boss-summary
@@ -18,7 +19,7 @@ requirements.txt          # 仅 requests + websocket-client
 SKILL.md / README(.en).md / CHANGELOG.md / CONTRIBUTING.md
 ```
 
-**重要边界：核心逻辑都放 `scripts/boss_cdp_raw.py`，不要随手新建文件**（见 `CONTRIBUTING.md`「单文件原则」）。`docs/` 被 `.gitignore` 忽略，是本地产物，不要提交。
+**重要边界：核心逻辑都放 `scripts/boss_cdp_raw.py`，不要随手新建文件**（见 `CONTRIBUTING.md`「单文件原则」）。`docs/` 被 `.gitignore` 忽略，是本地产物，不要提交。**例外**：`data/city_codes.json` 是城市码表数据（非逻辑代码），外置便于用户查看支持哪些城市；改它要同步跑 `tests.test_chrome_setup` 的城市码表防回归测试。
 
 ## 环境与命令
 
@@ -38,7 +39,7 @@ SKILL.md / README(.en).md / CHANGELOG.md / CONTRIBUTING.md
 
 ## 架构关键点（容易踩坑）
 
-- `scripts/boss_cdp_raw.py` 是一个**长单文件**，包含：`CDPSession` 类（WebSocket 连 CDP）、城市码表、各种 `EXTRACT_*_JS` 注入脚本、`scrape_jobs`（列表走 `/wapi/...` API）、`scrape_details`（详情走新开 tab 渲染）、`main`（argparse）。
+- `scripts/boss_cdp_raw.py` 是一个**长单文件**，包含：`CDPSession` 类（WebSocket 连 CDP）、各种 `EXTRACT_*_JS` 注入脚本、`scrape_jobs`（列表走 `/wapi/...` API）、`scrape_details`（详情走新开 tab 渲染）、`main`（argparse）。城市码表外置到 `data/city_codes.json`，`resolve_city` 查询链为「本地静态码表 → 运行时拉 BOSS 接口 → 原样兜底」。
 - **列表页 vs 详情页路径完全不同**：列表页通过页面内 `fetch` 调 BOSS wapi（带 token，不经页面渲染）；详情页通过 `Target.createTarget` 新开 tab → `Page.navigate` → 注入 JS 提取。改其中一条路径时，另一条不受影响。
 - **CDP `background:true` 的坑（issue #18）**：后台 tab 的 `document.hidden=true` 会触发 BOSS visibility 反爬，导致详情抓空。当前在 `scrape_details` 导航前用 `Page.addScriptToEvaluateOnNewDocument` 注入脚本覆盖可见性属性为 visible。动详情页逻辑时别破坏这段。
 - 同一个 Chrome 实例的默认 browser context 下，新开 target **本就共享 cookies**，不要被「新 tab 丢 cookie」的直觉误导。
@@ -47,3 +48,5 @@ SKILL.md / README(.en).md / CHANGELOG.md / CONTRIBUTING.md
 ## 提交流程
 
 默认分支 `master`，fork/分支工作流：从 `master` 拉新分支（`fix/...`、`feat/...`）→ 改代码补测试 → push → PR。一个 PR 只做一件事。
+
+**先开 issue 再动手**：非平凡的改动（bug 修复、新功能、文档补充）按仓库 `CONTRIBUTING.md` 的规范，先在 Issues 开一条说明「改什么 / 为什么 / 怎么改」，讨论清楚后再起新分支提交。issue 正文要结构化（问题 / 现状 / 根因 / 建议 / 影响），并标注改动范围（哪些逻辑受影响、哪些不动）。
