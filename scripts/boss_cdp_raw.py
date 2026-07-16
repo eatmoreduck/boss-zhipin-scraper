@@ -37,8 +37,10 @@ import shutil
 import signal
 import logging
 import ntpath
+from dataclasses import dataclass
 from datetime import datetime
 from collections import Counter
+from enum import Enum
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
 from urllib.request import Request, urlopen
 
@@ -110,10 +112,16 @@ DEFAULT_CDP_DATA_DIR = os.path.expanduser("~/.boss-zhipin-scraper/chrome-profile
 DEFAULT_RESULT_DIR = os.path.expanduser("~/.boss-zhipin-scraper/job-result")
 DEFAULT_CITY_INPUT = "上海"
 LOGIN_PROBE_QUERY = "Java"
-LOGIN_PROBE_QUERIES = ("Java", "AI Agent", "产品经理")
 LOGIN_PROBE_CITY = "101020100"
-LOGIN_PROBE_CITIES = ("101020100", "101010100", "101280600")
+LOGIN_PROBE_TARGETS = (
+    ("Java", "101020100"),
+    ("AI Agent", "101010100"),
+    ("产品经理", "101280600"),
+)
 LOGIN_PROBE_PAGE_SIZE = 10
+LOGIN_PROBE_MAX_INTERVAL = 15
+LOGIN_PROBE_MAX_TRANSIENT_ERRORS = 2
+LOGIN_RESTRICTED_CODES = {31}
 DEFAULT_LOGIN_TIMEOUT = 300
 
 # 全局请求计数器
@@ -696,18 +704,94 @@ def list_cities(keyword=None, use_live=True):
         print(f"  {name}\t{code}")
 
 
+class LoginProbeStatus(Enum):
+    """Outcome of one login probe request."""
+
+    AVAILABLE = "available"
+    UNAUTHENTICATED = "unauthenticated"
+    RESTRICTED = "restricted"
+    EMPTY = "empty"
+    RESPONSE_ERROR = "response_error"
+
+
+@dataclass(frozen=True)
+class LoginProbeResult:
+    """Structured login probe result with the original failure context."""
+
+    status: LoginProbeStatus
+    code: int | None = None
+    message: str = ""
+    retryable: bool = False
+
+
+def classify_login_probe_response(data, http_status=200):
+    """Classify a BOSS search response without collapsing failures to bool."""
+    if http_status == 401:
+        return LoginProbeResult(
+            LoginProbeStatus.UNAUTHENTICATED,
+            message="HTTP 401",
+        )
+    if http_status in (403, 429):
+        return LoginProbeResult(
+            LoginProbeStatus.RESTRICTED,
+            message=f"HTTP {http_status}",
+        )
+    if http_status != 200:
+        return LoginProbeResult(
+            LoginProbeStatus.RESPONSE_ERROR,
+            message=f"HTTP {http_status}",
+            retryable=http_status == 0 or http_status >= 500,
+        )
+    if not isinstance(data, dict):
+        return LoginProbeResult(
+            LoginProbeStatus.RESPONSE_ERROR,
+            message="响应不是 JSON 对象",
+            retryable=True,
+        )
+
+    raw_code = data.get("code")
+    try:
+        code = int(raw_code) if raw_code is not None else None
+    except (TypeError, ValueError):
+        code = None
+    message = str(data.get("message") or data.get("msg") or "")
+
+    if code in LOGIN_RESTRICTED_CODES:
+        return LoginProbeResult(LoginProbeStatus.RESTRICTED, code=code, message=message)
+    if code != 0:
+        return LoginProbeResult(LoginProbeStatus.RESPONSE_ERROR, code=code, message=message)
+
+    zp_data = data.get("zpData")
+    if not isinstance(zp_data, dict):
+        return LoginProbeResult(
+            LoginProbeStatus.RESPONSE_ERROR,
+            code=code,
+            message="响应缺少 zpData",
+            retryable=True,
+        )
+    job_list = zp_data.get("jobList")
+    if not isinstance(job_list, list):
+        return LoginProbeResult(
+            LoginProbeStatus.RESPONSE_ERROR,
+            code=code,
+            message="响应缺少 jobList",
+            retryable=True,
+        )
+    if not job_list:
+        return LoginProbeResult(LoginProbeStatus.EMPTY, code=code)
+    if any(
+        (job.get("salaryDesc") or "").strip()
+        for job in job_list
+        if isinstance(job, dict)
+    ):
+        return LoginProbeResult(LoginProbeStatus.AVAILABLE, code=code)
+    return LoginProbeResult(LoginProbeStatus.UNAUTHENTICATED, code=code)
+
 
 def is_logged_in_search_response(data):
     """Return True only when BOSS returns jobs with plaintext salary."""
-    if not isinstance(data, dict) or data.get("code") != 0:
-        return False
-    zp_data = data.get("zpData", {})
-    if not isinstance(zp_data, dict):
-        return False
-    job_list = zp_data.get("jobList")
-    if not isinstance(job_list, list) or not job_list:
-        return False
-    return any((job.get("salaryDesc") or "").strip() for job in job_list if isinstance(job, dict))
+    result = classify_login_probe_response(data)
+    return result.status is LoginProbeStatus.AVAILABLE
 
 
 def build_login_probe_url(query, city_code):
@@ -721,28 +805,77 @@ def build_login_probe_url(query, city_code):
     return f"{API_JOB_LIST_PATH}?{urlencode(params)}"
 
 
-def probe_login_state(cdp, sid):
-    for query in LOGIN_PROBE_QUERIES:
-        for city_code in LOGIN_PROBE_CITIES:
-            probe_url = build_login_probe_url(query, city_code)
-            js = f"""
-            (function(){{
-                var xhr = new XMLHttpRequest();
-                xhr.open('GET', '{probe_url}', false);
-                xhr.send();
-                return xhr.responseText;
-            }})()
-            """
-            val = cdp.eval_js(js, sid)
-            if not val:
-                continue
-            try:
-                data = json.loads(val) if isinstance(val, str) else val
-            except (json.JSONDecodeError, ValueError):
-                continue
-            if is_logged_in_search_response(data):
-                return True
-    return False
+def probe_login_state(cdp, sid, query=LOGIN_PROBE_QUERY, city_code=LOGIN_PROBE_CITY):
+    """Run exactly one budgeted search probe and return its structured state."""
+    probe_url = build_login_probe_url(query, city_code)
+    js = f"""
+    (function(){{
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '{probe_url}', false);
+        xhr.send();
+        return JSON.stringify({{
+            httpStatus: xhr.status,
+            body: xhr.responseText
+        }});
+    }})()
+    """
+    incr_request()
+    val = cdp.eval_js(js, sid)
+    if not val:
+        return LoginProbeResult(
+            LoginProbeStatus.RESPONSE_ERROR,
+            message="探测响应为空",
+            retryable=True,
+        )
+    try:
+        envelope = json.loads(val) if isinstance(val, str) else val
+    except (json.JSONDecodeError, ValueError):
+        return LoginProbeResult(
+            LoginProbeStatus.RESPONSE_ERROR,
+            message="探测响应不是有效 JSON",
+            retryable=True,
+        )
+    if not isinstance(envelope, dict):
+        return LoginProbeResult(
+            LoginProbeStatus.RESPONSE_ERROR,
+            message="探测响应格式异常",
+            retryable=True,
+        )
+
+    raw_http_status = envelope.get("httpStatus", 200)
+    try:
+        http_status = int(raw_http_status)
+    except (TypeError, ValueError):
+        http_status = 0
+    body = envelope.get("body", envelope)
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            return LoginProbeResult(
+                LoginProbeStatus.RESPONSE_ERROR,
+                message="搜索接口响应不是有效 JSON",
+                retryable=True,
+            )
+    return classify_login_probe_response(body, http_status=http_status)
+
+
+def describe_login_probe_result(result):
+    """Return a concise user-facing explanation for a non-available state."""
+    context = []
+    if result.code is not None:
+        context.append(f"code: {result.code}")
+    if result.message:
+        context.append(result.message)
+    suffix = f"（{'; '.join(context)}）" if context else ""
+
+    if result.status is LoginProbeStatus.UNAUTHENTICATED:
+        return f"未检测到可用登录态{suffix}"
+    if result.status is LoginProbeStatus.RESTRICTED:
+        return f"BOSS 接口返回限制状态{suffix}"
+    if result.status is LoginProbeStatus.EMPTY:
+        return "探测样本没有职位，暂时无法确认登录态"
+    return f"登录探测响应异常{suffix}"
 
 
 # ============================================================
@@ -752,8 +885,10 @@ def check_login_state(cdp_port=DEFAULT_CDP_PORT):
     """通过 CDP 检测 BOSS直聘登录状态。
 
     Returns:
-        True 已登录, False 未登录
+        LoginProbeResult: 登录探测的结构化状态
     """
+    cdp = None
+    tid = None
     try:
         cdp = CDPSession(cdp_port)
         tid, sid = create_page_session(cdp)
@@ -762,16 +897,26 @@ def check_login_state(cdp_port=DEFAULT_CDP_PORT):
         cdp.send("Page.navigate", {"url": "https://www.zhipin.com/"}, sid)
         time.sleep(4)
 
-        logged_in = probe_login_state(cdp, sid)
-
-        cdp.send("Target.closeTarget", {"targetId": tid})
-        cdp.close()
-
-        return logged_in
+        return probe_login_state(cdp, sid)
     except (requests.ConnectionError, requests.Timeout, KeyError,
-            json.JSONDecodeError, websocket.WebSocketException) as e:
+            json.JSONDecodeError, websocket.WebSocketException,
+            TimeoutError, RuntimeError) as e:
         log.error(f"登录状态检测失败: {e}")
-        return False
+        return LoginProbeResult(
+            LoginProbeStatus.RESPONSE_ERROR,
+            message=str(e),
+        )
+    finally:
+        if cdp is not None:
+            if tid is not None:
+                try:
+                    cdp.send("Target.closeTarget", {"targetId": tid})
+                except (KeyError, websocket.WebSocketException, TimeoutError):
+                    log.debug("关闭登录探测 target 失败", exc_info=True)
+            try:
+                cdp.close()
+            except websocket.WebSocketException:
+                log.debug("关闭登录探测 CDP 连接失败", exc_info=True)
 
 
 def wait_for_login(cdp_port=DEFAULT_CDP_PORT, timeout=DEFAULT_LOGIN_TIMEOUT, interval=3):
@@ -786,15 +931,44 @@ def wait_for_login(cdp_port=DEFAULT_CDP_PORT, timeout=DEFAULT_LOGIN_TIMEOUT, int
 
     deadline = time.time() + timeout
     logged_in = False
+    attempt = 0
+    transient_errors = 0
     print(f"等待 BOSS 登录完成（最长 {timeout}s）", end="", flush=True)
     try:
         while time.time() <= deadline:
-            if probe_login_state(cdp, sid):
+            query, city_code = LOGIN_PROBE_TARGETS[attempt % len(LOGIN_PROBE_TARGETS)]
+            try:
+                result = probe_login_state(cdp, sid, query=query, city_code=city_code)
+            except RuntimeError as e:
+                print(f"\n❌ {e}")
+                return False
+
+            if result.status is LoginProbeStatus.AVAILABLE:
                 logged_in = True
                 print("\n✅ 已检测到 BOSS 登录态，且接口返回明文薪资")
                 return True
+            if result.status is LoginProbeStatus.RESTRICTED:
+                print(f"\n❌ {describe_login_probe_result(result)}，已停止登录探测")
+                print("   当前问题不是尚未登录；请先在浏览器中完成验证或稍后再试")
+                return False
+            if result.status is LoginProbeStatus.RESPONSE_ERROR:
+                if not result.retryable:
+                    print(f"\n❌ {describe_login_probe_result(result)}，已停止登录探测")
+                    return False
+                transient_errors += 1
+                if transient_errors > LOGIN_PROBE_MAX_TRANSIENT_ERRORS:
+                    print(f"\n❌ {describe_login_probe_result(result)}，连续异常次数过多")
+                    return False
+            else:
+                transient_errors = 0
+
             print(".", end="", flush=True)
-            time.sleep(interval)
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            delay = min(interval * (2 ** attempt), LOGIN_PROBE_MAX_INTERVAL, remaining)
+            time.sleep(delay)
+            attempt += 1
         print("\n❌ 等待登录超时")
         print("   Chrome 会继续保持打开；登录后可重新运行 --check 或抓取命令")
         return False
@@ -1702,11 +1876,14 @@ def run_check(cdp_port=DEFAULT_CDP_PORT):
         all_pass = False
     else:
         try:
-            logged_in = check_login_state(cdp_port)
-            if logged_in:
+            login_result = check_login_state(cdp_port)
+            if login_result.status is LoginProbeStatus.AVAILABLE:
                 print(f"  ✅ 已登录")
+            elif login_result.status is LoginProbeStatus.EMPTY:
+                print(f"  ⚠️  {describe_login_probe_result(login_result)}")
+                all_pass = False
             else:
-                print(f"  ❌ 未登录 — 请先在 Chrome 中登录 zhipin.com")
+                print(f"  ❌ {describe_login_probe_result(login_result)}")
                 all_pass = False
         except Exception as e:
             print(f"  ❌ 检测失败: {e}")
@@ -2184,11 +2361,22 @@ def main():
     else:
         # 登录状态检测
         print("检测登录状态...")
-        if not check_login_state(args.cdp_port):
+        login_result = check_login_state(args.cdp_port)
+        if login_result.status is LoginProbeStatus.UNAUTHENTICATED:
             print("❌ 未检测到 BOSS直聘登录状态。请先在 Chrome 中登录 zhipin.com。")
             print(f"   可运行 --check 检查环境，或 --setup-chrome 启动 Chrome。")
             sys.exit(1)
-        print("✅ 已登录\n")
+        if login_result.status is LoginProbeStatus.RESTRICTED:
+            print(f"❌ {describe_login_probe_result(login_result)}，已停止抓取。")
+            print("   请先在浏览器中完成验证或稍后再试，不要重复运行登录探测。")
+            sys.exit(1)
+        if login_result.status is LoginProbeStatus.RESPONSE_ERROR:
+            print(f"❌ {describe_login_probe_result(login_result)}，已停止抓取。")
+            sys.exit(1)
+        if login_result.status is LoginProbeStatus.EMPTY:
+            print(f"⚠️  {describe_login_probe_result(login_result)}；继续执行实际职位搜索。\n")
+        else:
+            print("✅ 已登录\n")
 
         list_data = scrape_list(
             args.keyword, args.city, args.pages, filters, args.output,

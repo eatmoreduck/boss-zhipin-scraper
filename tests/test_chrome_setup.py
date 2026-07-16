@@ -1,5 +1,6 @@
 import importlib.util
 import csv
+import io
 import json
 import os
 import pathlib
@@ -7,6 +8,7 @@ import re
 import subprocess
 import sys
 import unittest
+from contextlib import redirect_stdout
 from unittest import mock
 
 
@@ -112,7 +114,11 @@ class ChromeSetupTests(unittest.TestCase):
                     "create_page_session",
                     return_value=("login-target", "login-session"),
                 ) as create_session, \
-                mock.patch.object(module, "probe_login_state", return_value=True):
+                mock.patch.object(
+                    module,
+                    "probe_login_state",
+                    return_value=module.LoginProbeResult(module.LoginProbeStatus.AVAILABLE),
+                ):
             self.assertTrue(module.wait_for_login(cdp_port=9333, timeout=1))
 
         create_session.assert_called_once_with(
@@ -324,6 +330,79 @@ class ChromeSetupTests(unittest.TestCase):
         self.assertTrue(module.is_logged_in_search_response(visible_salary))
         self.assertFalse(module.is_logged_in_search_response({"code": 7, "zpData": {"jobList": []}}))
 
+    def test_login_probe_classifies_distinct_failure_states(self):
+        module = load_module()
+
+        cases = [
+            (
+                {"code": 0, "zpData": {"jobList": [{"salaryDesc": "20-40K"}]}},
+                module.LoginProbeStatus.AVAILABLE,
+            ),
+            (
+                {"code": 0, "zpData": {"jobList": [{"salaryDesc": ""}]}},
+                module.LoginProbeStatus.UNAUTHENTICATED,
+            ),
+            (
+                {"code": 0, "zpData": {"jobList": []}},
+                module.LoginProbeStatus.EMPTY,
+            ),
+            (
+                {"code": 31, "message": "访问受限"},
+                module.LoginProbeStatus.RESTRICTED,
+            ),
+            (
+                {"code": 7, "message": "业务异常"},
+                module.LoginProbeStatus.RESPONSE_ERROR,
+            ),
+        ]
+
+        for response, expected in cases:
+            with self.subTest(expected=expected):
+                result = module.classify_login_probe_response(response)
+                self.assertIs(result.status, expected)
+
+        restricted = module.classify_login_probe_response({"code": 31, "message": "访问受限"})
+        self.assertEqual(restricted.code, 31)
+        self.assertEqual(restricted.message, "访问受限")
+
+    def test_login_probe_classifies_http_failures(self):
+        module = load_module()
+
+        self.assertIs(
+            module.classify_login_probe_response({}, http_status=401).status,
+            module.LoginProbeStatus.UNAUTHENTICATED,
+        )
+        self.assertIs(
+            module.classify_login_probe_response({}, http_status=429).status,
+            module.LoginProbeStatus.RESTRICTED,
+        )
+        server_error = module.classify_login_probe_response({}, http_status=503)
+        self.assertIs(server_error.status, module.LoginProbeStatus.RESPONSE_ERROR)
+        self.assertTrue(server_error.retryable)
+
+    def test_run_check_reports_restriction_instead_of_logged_out(self):
+        module = load_module()
+        response = mock.Mock()
+        response.json.return_value = {"Browser": "Chrome/140"}
+        restricted = module.LoginProbeResult(
+            module.LoginProbeStatus.RESTRICTED,
+            code=31,
+            message="访问受限",
+        )
+        requests_mock = mock.Mock()
+        requests_mock.get.return_value = response
+        stdout = io.StringIO()
+        with mock.patch.object(module, "require_runtime_dependencies", return_value=True), \
+                mock.patch.object(module, "requests", requests_mock), \
+                mock.patch.object(module, "check_login_state", return_value=restricted), \
+                redirect_stdout(stdout):
+            self.assertEqual(module.run_check(cdp_port=9333), 1)
+
+        output = stdout.getvalue()
+        self.assertIn("限制状态", output)
+        self.assertIn("code: 31", output)
+        self.assertNotIn("未登录 —", output)
+
     def test_detail_record_preserves_job_id_and_job_link(self):
         module = load_module()
         job = {
@@ -480,16 +559,116 @@ class ChromeSetupTests(unittest.TestCase):
             [{"title": "Java", "job_link": "https://example.com"}],
         )
 
-    def test_login_probe_tries_multiple_urls_until_plaintext_salary(self):
+    def test_login_probe_uses_one_budgeted_request(self):
         module = load_module()
         cdp = mock.Mock()
-        cdp.eval_js.side_effect = [
-            json.dumps({"code": 0, "zpData": {"jobList": [{"jobName": "Java", "salaryDesc": ""}]}}),
-            json.dumps({"code": 0, "zpData": {"jobList": [{"jobName": "AI", "salaryDesc": "20-40K"}]}}),
-        ]
+        cdp.eval_js.return_value = json.dumps({
+            "httpStatus": 200,
+            "body": json.dumps({
+                "code": 0,
+                "zpData": {"jobList": [{"jobName": "Java", "salaryDesc": "20-40K"}]},
+            }),
+        })
+        module._request_counter = 0
 
-        self.assertTrue(module.probe_login_state(cdp, "sid"))
-        self.assertEqual(cdp.eval_js.call_count, 2)
+        result = module.probe_login_state(cdp, "sid", query="Java", city_code="101020100")
+
+        self.assertIs(result.status, module.LoginProbeStatus.AVAILABLE)
+        self.assertEqual(cdp.eval_js.call_count, 1)
+        self.assertEqual(module._request_counter, 1)
+        probe_js = cdp.eval_js.call_args.args[0]
+        self.assertIn("query=Java", probe_js)
+        self.assertIn("city=101020100", probe_js)
+
+    def test_wait_for_login_rotates_targets_and_backs_off(self):
+        module = load_module()
+        cdp = mock.Mock()
+        results = [
+            module.LoginProbeResult(module.LoginProbeStatus.EMPTY),
+            module.LoginProbeResult(module.LoginProbeStatus.AVAILABLE),
+        ]
+        with mock.patch.object(module, "CDPSession", return_value=cdp), \
+                mock.patch.object(
+                    module,
+                    "create_page_session",
+                    return_value=("login-target", "login-session"),
+                ), \
+                mock.patch.object(module, "probe_login_state", side_effect=results) as probe, \
+                mock.patch.object(module.time, "sleep") as sleep:
+            self.assertTrue(module.wait_for_login(cdp_port=9333, timeout=10, interval=3))
+
+        self.assertEqual(
+            probe.call_args_list,
+            [
+                mock.call(
+                    cdp,
+                    "login-session",
+                    query=module.LOGIN_PROBE_TARGETS[0][0],
+                    city_code=module.LOGIN_PROBE_TARGETS[0][1],
+                ),
+                mock.call(
+                    cdp,
+                    "login-session",
+                    query=module.LOGIN_PROBE_TARGETS[1][0],
+                    city_code=module.LOGIN_PROBE_TARGETS[1][1],
+                ),
+            ],
+        )
+        sleep.assert_called_once()
+        self.assertAlmostEqual(sleep.call_args.args[0], 3, delta=0.1)
+
+    def test_wait_for_login_stops_immediately_when_restricted(self):
+        module = load_module()
+        cdp = mock.Mock()
+        restricted = module.LoginProbeResult(
+            module.LoginProbeStatus.RESTRICTED,
+            code=31,
+            message="访问受限",
+        )
+        stdout = io.StringIO()
+        with mock.patch.object(module, "CDPSession", return_value=cdp), \
+                mock.patch.object(
+                    module,
+                    "create_page_session",
+                    return_value=("login-target", "login-session"),
+                ), \
+                mock.patch.object(module, "probe_login_state", return_value=restricted) as probe, \
+                mock.patch.object(module.time, "sleep") as sleep, \
+                redirect_stdout(stdout):
+            self.assertFalse(module.wait_for_login(cdp_port=9333, timeout=300))
+
+        probe.assert_called_once()
+        sleep.assert_not_called()
+        self.assertIn("code: 31", stdout.getvalue())
+        self.assertIn("已停止登录探测", stdout.getvalue())
+
+    def test_wait_for_login_limits_transient_response_errors(self):
+        module = load_module()
+        cdp = mock.Mock()
+        transient_error = module.LoginProbeResult(
+            module.LoginProbeStatus.RESPONSE_ERROR,
+            message="响应为空",
+            retryable=True,
+        )
+        stdout = io.StringIO()
+        with mock.patch.object(module, "CDPSession", return_value=cdp), \
+                mock.patch.object(
+                    module,
+                    "create_page_session",
+                    return_value=("login-target", "login-session"),
+                ), \
+                mock.patch.object(
+                    module,
+                    "probe_login_state",
+                    return_value=transient_error,
+                ) as probe, \
+                mock.patch.object(module.time, "sleep") as sleep, \
+                redirect_stdout(stdout):
+            self.assertFalse(module.wait_for_login(cdp_port=9333, timeout=300))
+
+        self.assertEqual(probe.call_count, module.LOGIN_PROBE_MAX_TRANSIENT_ERRORS + 1)
+        self.assertEqual(sleep.call_count, module.LOGIN_PROBE_MAX_TRANSIENT_ERRORS)
+        self.assertIn("连续异常次数过多", stdout.getvalue())
 
     def test_find_latest_detail_file_uses_default_result_dir(self):
         module = load_module()
