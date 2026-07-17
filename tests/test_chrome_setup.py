@@ -351,6 +351,16 @@ class ChromeSetupTests(unittest.TestCase):
                 module.LoginProbeStatus.RESTRICTED,
             ),
             (
+                # 实测风控码：已登录但被 BOSS 判「环境存在异常」（issue #33）
+                {"code": 37, "message": "您的环境存在异常."},
+                module.LoginProbeStatus.RESTRICTED,
+            ),
+            (
+                # 未知风控码但 message 命中风控关键词，兜底归 RESTRICTED
+                {"code": 9999, "message": "检测到访问频繁，请稍后再试"},
+                module.LoginProbeStatus.RESTRICTED,
+            ),
+            (
                 {"code": 7, "message": "业务异常"},
                 module.LoginProbeStatus.RESPONSE_ERROR,
             ),
@@ -364,6 +374,13 @@ class ChromeSetupTests(unittest.TestCase):
         restricted = module.classify_login_probe_response({"code": 31, "message": "访问受限"})
         self.assertEqual(restricted.code, 31)
         self.assertEqual(restricted.message, "访问受限")
+
+        # 已登录但被风控（issue #33）：必须归 RESTRICTED 而非误判为登录失败
+        risk_control = module.classify_login_probe_response(
+            {"code": 37, "message": "您的环境存在异常."}
+        )
+        self.assertIs(risk_control.status, module.LoginProbeStatus.RESTRICTED)
+        self.assertEqual(risk_control.code, 37)
 
     def test_login_probe_classifies_http_failures(self):
         module = load_module()
@@ -641,6 +658,37 @@ class ChromeSetupTests(unittest.TestCase):
         sleep.assert_not_called()
         self.assertIn("code: 31", stdout.getvalue())
         self.assertIn("已停止登录探测", stdout.getvalue())
+
+    def test_wait_for_login_treats_code37_risk_control_as_restricted(self):
+        # issue #33：已登录但被 BOSS 风控（code 37「您的环境存在异常」），
+        # 必须走 RESTRICTED 文案分支，而非误判为不可恢复的登录失败。
+        module = load_module()
+        cdp = mock.Mock()
+        restricted = module.LoginProbeResult(
+            module.LoginProbeStatus.RESTRICTED,
+            code=37,
+            message="您的环境存在异常.",
+        )
+        stdout = io.StringIO()
+        with mock.patch.object(module, "CDPSession", return_value=cdp), \
+                mock.patch.object(
+                    module,
+                    "create_page_session",
+                    return_value=("login-target", "login-session"),
+                ), \
+                mock.patch.object(module, "probe_login_state", return_value=restricted) as probe, \
+                mock.patch.object(module.time, "sleep") as sleep, \
+                redirect_stdout(stdout):
+            self.assertFalse(module.wait_for_login(cdp_port=9333, timeout=300))
+
+        probe.assert_called_once()
+        sleep.assert_not_called()
+        output = stdout.getvalue()
+        self.assertIn("code: 37", output)
+        self.assertIn("已停止登录探测", output)
+        # 应提示用户「完成验证/稍后再试」，而不是误导性的「登录探测响应异常」
+        self.assertIn("请先在浏览器中完成验证或稍后再试", output)
+        self.assertNotIn("登录探测响应异常", output)
 
     def test_wait_for_login_limits_transient_response_errors(self):
         module = load_module()

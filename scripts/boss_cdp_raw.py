@@ -121,7 +121,17 @@ LOGIN_PROBE_TARGETS = (
 LOGIN_PROBE_PAGE_SIZE = 10
 LOGIN_PROBE_MAX_INTERVAL = 15
 LOGIN_PROBE_MAX_TRANSIENT_ERRORS = 2
-LOGIN_RESTRICTED_CODES = {31}
+LOGIN_RESTRICTED_CODES = {31, 37}
+# BOSS 风控码会随平台策略变化，码表追不上时按 message 关键字兜底识别风控/限流，
+# 避免把「已登录但被风控」误判为 RESPONSE_ERROR 进而当成登录失败。
+LOGIN_RESTRICTED_MESSAGE_KEYWORDS = (
+    "环境存在异常",
+    "访问频繁",
+    "操作太频繁",
+    "安全校验",
+    "滑块",
+    "验证",
+)
 DEFAULT_LOGIN_TIMEOUT = 300
 
 # 全局请求计数器
@@ -759,6 +769,10 @@ def classify_login_probe_response(data, http_status=200):
     if code in LOGIN_RESTRICTED_CODES:
         return LoginProbeResult(LoginProbeStatus.RESTRICTED, code=code, message=message)
     if code != 0:
+        # code 不在已知风控码集合里时，再按 message 关键字兜底判定是否风控，
+        # 避免新风控码被当成不可恢复的 RESPONSE_ERROR 误拦已登录用户。
+        if any(kw in message for kw in LOGIN_RESTRICTED_MESSAGE_KEYWORDS):
+            return LoginProbeResult(LoginProbeStatus.RESTRICTED, code=code, message=message)
         return LoginProbeResult(LoginProbeStatus.RESPONSE_ERROR, code=code, message=message)
 
     zp_data = data.get("zpData")
