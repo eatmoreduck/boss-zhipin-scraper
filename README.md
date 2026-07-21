@@ -1,11 +1,11 @@
-# BOSS直聘爬虫 · 职位抓取工具 v2.1（Chrome CDP / 明文薪资）
+# BOSS直聘爬虫 · 职位抓取工具 v2.2（Chrome CDP / 明文薪资）
 
 > 🌐 English documentation: [README.en.md](./README.en.md)
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)
-![Version](https://img.shields.io/badge/version-2.1.0-orange.svg)
+![Version](https://img.shields.io/badge/version-2.2.0-orange.svg)
 
 一个轻量的 **BOSS直聘爬虫（spider / crawler / scraper）**：通过 Chrome DevTools Protocol 连接本地已登录的 Chrome，复用真实登录态调用 zhipin.com 搜索 API，绕过前端字体反爬，输出含**明文薪资**的职位数据（JSON / CSV），并生成薪资分布、技能词频和求职材料优化提示词。同时作为 Hermes Agent Skill 提供。
 
@@ -49,6 +49,7 @@ python3 scripts/job_summary.py
 ## ✨ 特性
 
 - 明文薪资（API 模式，绕过字体反爬）
+- Boss 活跃状态独立字段（`boss_active_status`，如「今日活跃」「在线」）
 - JSON / CSV 双格式输出
 - 详情页 JD 抓取 + 技能分析
 - 抓取后聚合摘要 + 可复制提示词

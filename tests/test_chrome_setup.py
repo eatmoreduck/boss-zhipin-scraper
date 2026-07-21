@@ -432,7 +432,11 @@ class ChromeSetupTests(unittest.TestCase):
             "tags": "3-5年 | 本科",
             "job_link": "https://www.zhipin.com/job_detail/abc.html",
         }
-        extracted = {"tags": ["Python"], "jd": "Build AI agents"}
+        extracted = {
+            "tags": ["Python"],
+            "jd": "Build AI agents",
+            "boss_active_status": "今日活跃",
+        }
 
         detail = module.build_detail_record(job, extracted)
 
@@ -441,6 +445,26 @@ class ChromeSetupTests(unittest.TestCase):
         self.assertEqual(detail["link"], job["job_link"])
         self.assertEqual(detail["salary"], "30-60K")
         self.assertEqual(detail["salary_source"], "api")
+        self.assertEqual(detail["boss_active_status"], "今日活跃")
+
+    def test_detail_record_falls_back_to_list_active_status(self):
+        module = load_module()
+        job = {
+            "job_id": "abc123",
+            "title": "AI Engineer",
+            "boss_name": "Acme",
+            "salary": "30-60K",
+            "salary_source": "api",
+            "location": "上海",
+            "tags": "3-5年 | 本科",
+            "job_link": "https://www.zhipin.com/job_detail/abc.html",
+            "boss_active_status": "本周活跃",
+        }
+        extracted = {"tags": ["Python"], "jd": "Build AI agents"}
+
+        detail = module.build_detail_record(job, extracted)
+
+        self.assertEqual(detail["boss_active_status"], "本周活跃")
 
     def test_detail_extractor_never_uses_body_text_as_jd_fallback(self):
         module = load_module()
@@ -504,6 +528,45 @@ class ChromeSetupTests(unittest.TestCase):
         self.assertEqual(jd, description.strip())
         self.assertNotIn("李女士", jd)
         self.assertNotIn("招聘专员", jd)
+
+    def test_extract_detail_fields_returns_boss_active_status_separately(self):
+        module = load_module()
+        description = (
+            "公司介绍\n这段属于招聘方发布的岗位正文，应当保留。\n"
+            + "负责 AI 产品规划、需求分析、研发协作和上线复盘。\n" * 8
+        ).strip()
+        page_text = (
+            "微信扫码分享 举报\n职位描述\n"
+            f"{description}\n"
+            "张女士\n今日活跃\n示例公司\n·\n招聘者\n竞争力分析\n"
+            "查看完整个人竞争力\nBOSS 安全提示\n公司工商信息\n更多职位"
+        )
+
+        fields = module.extract_detail_fields({"jd": page_text, "page_text": page_text})
+
+        self.assertEqual(fields["jd"], description)
+        self.assertEqual(fields["boss_active_status"], "今日活跃")
+        self.assertNotIn("今日活跃", fields["jd"])
+        self.assertNotIn("张女士", fields["jd"])
+
+    def test_extract_detail_fields_online_status(self):
+        module = load_module()
+        description = "负责 AI 产品规划、需求分析和跨团队项目推进。\n" * 8
+        page_text = (
+            f"职位描述\n{description}"
+            "李女士\n在线\n示例公司\n·\n招聘专员"
+        )
+
+        fields = module.extract_detail_fields({"jd": page_text, "page_text": page_text})
+
+        self.assertEqual(fields["jd"], description.strip())
+        self.assertEqual(fields["boss_active_status"], "在线")
+        self.assertNotIn("在线", fields["jd"])
+
+    def test_api_extraction_keeps_boss_active_status_field(self):
+        module = load_module()
+
+        self.assertIn("boss_active_status: j.activeTimeDesc", module.FETCH_API_JS_TEMPLATE)
 
     def test_extract_job_description_removes_recruiter_card_before_safety_footer(self):
         module = load_module()

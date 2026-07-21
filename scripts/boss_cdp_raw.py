@@ -19,7 +19,7 @@ BOSS直聘职位抓取 + 分析 — 纯 CDP raw protocol
   uv run python3 scripts/boss_cdp_raw.py --version
 """
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 import json
 import time
@@ -410,6 +410,7 @@ FETCH_API_JS_TEMPLATE = """
             tags: [j.jobExperience || '', j.jobDegree || ''].filter(function(t){return t && t !== '\\u4e0d\\u9650';}).join(' | '),
             boss_name: j.brandName || '',
             boss_title: j.bossTitle || '',
+            boss_active_status: j.activeTimeDesc || '',
             company_scale: j.brandScaleName || '',
             company_stage: j.brandStageName || '',
             company_industry: j.brandIndustry || '',
@@ -545,39 +546,63 @@ def _looks_like_navigation_page(text):
     )
 
 
-def _recruiter_footer_start(lines):
+def _is_boss_activity_line(text):
+    """True for recruiter activity labels like「在线」「今日活跃」."""
+    return text == "在线" or text.endswith("活跃")
+
+
+def _recruiter_footer_info(lines):
+    """Locate recruiter card footer and optional activity status.
+
+    Returns ``(footer_start, boss_active_status)``. ``footer_start`` is the
+    line index where the recruiter card begins (to truncate JD), or ``None``.
+    ``boss_active_status`` is e.g. ``今日活跃`` / ``在线``, or ``""``.
+    """
     stripped_lines = [line.strip() for line in lines]
     end = len(stripped_lines)
     while end and not stripped_lines[end - 1]:
         end -= 1
 
-    def card_start(card_end):
+    def card_info(card_end):
         while card_end and not stripped_lines[card_end - 1]:
             card_end -= 1
         if card_end < 4 or stripped_lines[card_end - 2] != "·":
-            return None
+            return None, ""
         activity_or_name = stripped_lines[card_end - 4]
-        has_activity_line = (
-            activity_or_name == "在线" or activity_or_name.endswith("活跃")
-        )
-        start = card_end - 5 if has_activity_line else card_end - 4
-        return start if start >= 0 else None
+        has_activity_line = _is_boss_activity_line(activity_or_name)
+        if has_activity_line:
+            start = card_end - 5
+            status = activity_or_name
+        else:
+            start = card_end - 4
+            status = ""
+        if start < 0:
+            return None, ""
+        return start, status
 
     for marker in (DETAIL_COMPETITIVENESS_MARKER, DETAIL_SAFETY_MARKER):
         try:
             marker_index = stripped_lines.index(marker)
         except ValueError:
             continue
-        start = card_start(marker_index)
+        start, status = card_info(marker_index)
         if start is not None:
-            return start
-    return card_start(end)
+            return start, status
+    return card_info(end)
 
 
-def extract_job_description(extracted, min_length=MIN_DETAIL_TEXT_LENGTH):
-    """Return validated JD text without BOSS page chrome.
+def _recruiter_footer_start(lines):
+    start, _status = _recruiter_footer_info(lines)
+    return start
 
-    `page_text` is diagnostic input only. It is never persisted unless it has
+
+def extract_detail_fields(extracted, min_length=MIN_DETAIL_TEXT_LENGTH):
+    """Return validated JD and boss activity status as separate fields.
+
+    ``jd`` never includes the recruiter card or activity label.
+    ``boss_active_status`` is extracted from that card when present.
+
+    ``page_text`` is diagnostic input only. It is never persisted unless it has
     an explicit job-description section that passes all checks.
     """
     if not isinstance(extracted, dict):
@@ -601,7 +626,7 @@ def extract_job_description(extracted, min_length=MIN_DETAIL_TEXT_LENGTH):
         text = text.split(DETAIL_DESCRIPTION_MARKER, 1)[1]
 
     lines = text.replace("\r\n", "\n").splitlines()
-    footer_start = _recruiter_footer_start(lines)
+    footer_start, boss_active_status = _recruiter_footer_info(lines)
     if footer_start is not None:
         lines = lines[:footer_start]
     else:
@@ -615,7 +640,12 @@ def extract_job_description(extracted, min_length=MIN_DETAIL_TEXT_LENGTH):
         raise DetailExtractionError(
             f"job description too short after validation: {len(jd)} < {min_length}"
         )
-    return jd
+    return {"jd": jd, "boss_active_status": boss_active_status}
+
+
+def extract_job_description(extracted, min_length=MIN_DETAIL_TEXT_LENGTH):
+    """Return validated JD text without BOSS page chrome."""
+    return extract_detail_fields(extracted, min_length=min_length)["jd"]
 
 
 # ============================================================
@@ -997,13 +1027,14 @@ def wait_for_login(cdp_port=DEFAULT_CDP_PORT, timeout=DEFAULT_LOGIN_TIMEOUT, int
 # ============================================================
 CSV_COLUMNS = [
     "job_id", "title", "salary", "salary_source", "location", "tags", "boss_name",
+    "boss_active_status",
     "company_scale", "company_stage", "company_industry", "skills",
     "job_link", "welfare",
 ]
 
 DETAIL_CSV_COLUMNS = [
     "job_id", "title", "company", "salary", "salary_source", "location",
-    "tags_list", "job_link", "skill_tags", "jd",
+    "boss_active_status", "tags_list", "job_link", "skill_tags", "jd",
 ]
 
 
@@ -1402,7 +1433,10 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
                 new += 1
                 salary = j.get('salary','?')
                 scale = j.get('company_scale', '')
+                active = j.get('boss_active_status', '')
                 extra = f" | {scale}" if scale else ""
+                if active:
+                    extra += f" | {active}"
                 print(f"  ✓ {j['title']} | {salary} | {j.get('location','')} | {j.get('boss_name','')}{extra}")
 
             print(f"  本页 {len(jobs)} 条, 新增 {new}, 累计 {len(all_jobs)}")
@@ -1459,6 +1493,11 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
 # ============================================================
 def build_detail_record(job, extracted):
     link = job.get("job_link", "")
+    boss_active_status = (
+        extracted.get("boss_active_status")
+        or job.get("boss_active_status")
+        or ""
+    )
     return {
         "job_id": job.get("job_id", ""),
         "title": job.get("title", ""),
@@ -1466,6 +1505,7 @@ def build_detail_record(job, extracted):
         "salary": job.get("salary", ""),
         "salary_source": job.get("salary_source", ""),
         "location": job.get("location", ""),
+        "boss_active_status": boss_active_status,
         "tags_list": job.get("tags", ""),
         "job_link": link,
         "link": link,
@@ -1546,7 +1586,11 @@ def scrape_details(list_data, max_details=None, output_path=None,
             d = {"jd": "", "tags": []}
 
         try:
-            d["jd"] = extract_job_description(d)
+            fields = extract_detail_fields(d)
+            d["jd"] = fields["jd"]
+            d["boss_active_status"] = fields["boss_active_status"] or job.get(
+                "boss_active_status", ""
+            )
         except DetailLoginRequiredError as exc:
             ws.send("Target.closeTarget", {"targetId": tid})
             ws.close()
@@ -1564,6 +1608,8 @@ def scrape_details(list_data, max_details=None, output_path=None,
 
         if d.get("tags"):
             print(f"  技能: {', '.join(d['tags'])}")
+        if d.get("boss_active_status"):
+            print(f"  活跃: {d['boss_active_status']}")
         print(f"  JD: {len(d.get('jd',''))} 字 ({time.time()-t0:.0f}s)")
 
         # 每抓完一个详情就写入，异常退出也能保留

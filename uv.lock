@@ -4,7 +4,7 @@ requires-python = ">=3.10"
 
 [[package]]
 name = "boss-zhipin-scraper"
-version = "2.0.0"
+version = "2.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "requests" },
