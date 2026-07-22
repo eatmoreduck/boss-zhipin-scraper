@@ -410,7 +410,7 @@ FETCH_API_JS_TEMPLATE = """
             tags: [j.jobExperience || '', j.jobDegree || ''].filter(function(t){return t && t !== '\\u4e0d\\u9650';}).join(' | '),
             boss_name: j.brandName || '',
             boss_title: j.bossTitle || '',
-            boss_active_status: j.activeTimeDesc || '',
+            boss_active_status: j.activeTimeDesc || (j.bossOnline ? '\\u5728\\u7ebf' : ''),
             company_scale: j.brandScaleName || '',
             company_stage: j.brandStageName || '',
             company_industry: j.brandIndustry || '',
@@ -549,6 +549,32 @@ def _looks_like_navigation_page(text):
 def _is_boss_activity_line(text):
     """True for recruiter activity labels like「在线」「今日活跃」."""
     return text == "在线" or text.endswith("活跃")
+
+
+def map_list_boss_active_status(job):
+    """Map list-API job fields to ``boss_active_status``.
+
+    BOSS ``/wapi/zpgeek/search/joblist.json`` typically exposes ``bossOnline``
+    but not ``activeTimeDesc``. Prefer ``activeTimeDesc`` when present;
+    otherwise map ``bossOnline=True`` to 「在线」. Detailed labels such as
+    「刚刚活跃」still come from the detail path.
+    """
+    if not isinstance(job, dict):
+        return ""
+    desc = str(job.get("activeTimeDesc") or "").strip()
+    if desc:
+        return desc
+    if job.get("bossOnline"):
+        return "在线"
+    return ""
+
+
+def resolve_boss_active_status(list_status="", detail_status=""):
+    """Prefer detail activity text; fall back to list mapping result."""
+    detail = str(detail_status or "").strip()
+    if detail:
+        return detail
+    return str(list_status or "").strip()
 
 
 def _recruiter_footer_info(lines):
@@ -1493,10 +1519,9 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
 # ============================================================
 def build_detail_record(job, extracted):
     link = job.get("job_link", "")
-    boss_active_status = (
-        extracted.get("boss_active_status")
-        or job.get("boss_active_status")
-        or ""
+    boss_active_status = resolve_boss_active_status(
+        list_status=job.get("boss_active_status", ""),
+        detail_status=extracted.get("boss_active_status", ""),
     )
     return {
         "job_id": job.get("job_id", ""),
@@ -1588,8 +1613,9 @@ def scrape_details(list_data, max_details=None, output_path=None,
         try:
             fields = extract_detail_fields(d)
             d["jd"] = fields["jd"]
-            d["boss_active_status"] = fields["boss_active_status"] or job.get(
-                "boss_active_status", ""
+            d["boss_active_status"] = resolve_boss_active_status(
+                list_status=job.get("boss_active_status", ""),
+                detail_status=fields["boss_active_status"],
             )
         except DetailLoginRequiredError as exc:
             ws.send("Target.closeTarget", {"targetId": tid})

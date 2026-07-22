@@ -49,7 +49,7 @@ python3 scripts/job_summary.py
 ## ✨ 特性
 
 - 明文薪资（API 模式，绕过字体反爬）
-- Boss 活跃状态独立字段（`boss_active_status`，如「今日活跃」「在线」）
+- Boss 活跃状态独立字段（`boss_active_status`）：列表兼容 `bossOnline`→「在线」，详情可得到「刚刚活跃」等更细状态
 - JSON / CSV 双格式输出
 - 详情页 JD 抓取 + 技能分析
 - 抓取后聚合摘要 + 可复制提示词

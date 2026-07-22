@@ -47,7 +47,7 @@ Right after scraping you get: salary ranges, experience requirements, top skill 
 ## ✨ Features
 
 - Plaintext salary (API mode, bypasses font-based obfuscation)
-- Boss activity status as a separate field (`boss_active_status`, e.g. "Active today" / "Online")
+- Boss activity status as a separate field (`boss_active_status`): list maps `bossOnline`→"在线"; detail can provide finer labels like "刚刚活跃"
 - Dual JSON / CSV output
 - Detail-page JD scraping + skill analysis
 - Aggregated summary + copy-paste prompt after scraping

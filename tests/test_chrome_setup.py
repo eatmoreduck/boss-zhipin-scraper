@@ -563,10 +563,54 @@ class ChromeSetupTests(unittest.TestCase):
         self.assertEqual(fields["boss_active_status"], "在线")
         self.assertNotIn("在线", fields["jd"])
 
-    def test_api_extraction_keeps_boss_active_status_field(self):
+    def test_map_list_boss_active_status_from_representative_responses(self):
         module = load_module()
 
-        self.assertIn("boss_active_status: j.activeTimeDesc", module.FETCH_API_JS_TEMPLATE)
+        # List API typically has bossOnline but not activeTimeDesc.
+        self.assertEqual(
+            module.map_list_boss_active_status({"bossOnline": True}),
+            "在线",
+        )
+        # Prefer detailed label when list unexpectedly has activeTimeDesc.
+        self.assertEqual(
+            module.map_list_boss_active_status({
+                "activeTimeDesc": "刚刚活跃",
+                "bossOnline": True,
+            }),
+            "刚刚活跃",
+        )
+        self.assertEqual(module.map_list_boss_active_status({}), "")
+        self.assertEqual(
+            module.map_list_boss_active_status({"bossOnline": False}),
+            "",
+        )
+
+    def test_resolve_boss_active_status_prefers_detail_over_list(self):
+        module = load_module()
+
+        self.assertEqual(
+            module.resolve_boss_active_status(
+                list_status="在线",
+                detail_status="刚刚活跃",
+            ),
+            "刚刚活跃",
+        )
+        self.assertEqual(
+            module.resolve_boss_active_status(list_status="在线", detail_status=""),
+            "在线",
+        )
+        self.assertEqual(
+            module.resolve_boss_active_status(list_status="", detail_status=""),
+            "",
+        )
+
+    def test_fetch_api_js_maps_bossonline_fallback(self):
+        module = load_module()
+        js = module.FETCH_API_JS_TEMPLATE
+
+        self.assertIn("j.activeTimeDesc", js)
+        self.assertIn("j.bossOnline", js)
+        self.assertIn("boss_active_status: j.activeTimeDesc || (j.bossOnline ?", js)
 
     def test_extract_job_description_removes_recruiter_card_before_safety_footer(self):
         module = load_module()
