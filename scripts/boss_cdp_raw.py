@@ -42,7 +42,7 @@ from datetime import datetime
 from collections import Counter
 from enum import Enum
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
-from urllib.request import Request, urlopen
+from curl_cffi import requests as curl_requests
 
 websocket = None
 requests = None
@@ -678,10 +678,13 @@ def extract_job_description(extracted, min_length=MIN_DETAIL_TEXT_LENGTH):
 # 解析城市参数（支持中文和代码）
 # ============================================================
 def fetch_boss_json(url, timeout=10):
-    req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
+    resp = curl_requests.get(
+        url,
+        headers={"User-Agent": "Mozilla/5.0"},
+        impersonate="chrome",
+        timeout=timeout,
+    )
+    return resp.json()
 
 def load_live_city_maps(timeout=10):
     global _live_city_maps_cache
@@ -724,6 +727,10 @@ def resolve_city(city_input):
     if not city_input:
         return city_input, city_input
 
+    # 9 位纯数字视为裸 city code，直接返回，不走后续查询
+    if re.match(r'^\d{9}$', city_input):
+        return city_input, city_input
+
     # 1. 本地静态码表
     local_map, local_reverse = load_local_city_map()
     if city_input in local_map:
@@ -738,7 +745,9 @@ def resolve_city(city_input):
     if city_input in live_reverse:
         return live_reverse[city_input], city_input
 
-    # 3. 兜底：原样返回
+    # 3. 兜底：走到这说明本地码表和 API 都解析失败
+    log.warning("无法解析城市 '%s'：本地码表和 BOSS API 均未命中，且不是 9 位 city code，"
+                "将原样透传可能导致 0 搜索结果", city_input)
     return city_input, city_input
 
 

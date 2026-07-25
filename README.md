@@ -83,6 +83,8 @@ mkdir -p ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts
 cp SKILL.md ~/.hermes/skills/data-science/boss-zhipin-scraper/
 cp scripts/boss_cdp_raw.py ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/
 cp scripts/job_summary.py ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/
+mkdir -p ~/.hermes/skills/data-science/boss-zhipin-scraper/data
+cp data/city_codes.json ~/.hermes/skills/data-science/boss-zhipin-scraper/data/
 ```
 
 ### 方式 2：curl 一键安装
@@ -96,7 +98,10 @@ curl -sL https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-scraper/maste
 curl -sL https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-scraper/master/scripts/boss_cdp_raw.py \
   -o ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/boss_cdp_raw.py && \
 curl -sL https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-scraper/master/scripts/job_summary.py \
-  -o ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/job_summary.py
+  -o ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/job_summary.py && \
+mkdir -p ~/.hermes/skills/data-science/boss-zhipin-scraper/data && \
+curl -sL https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-scraper/master/data/city_codes.json \
+  -o ~/.hermes/skills/data-science/boss-zhipin-scraper/data/city_codes.json
 ```
 
 ### 方式 3：hermes skills install（需网络直连 GitHub）
@@ -114,6 +119,7 @@ hermes skills install https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-
 ls ~/.hermes/skills/data-science/boss-zhipin-scraper/SKILL.md
 ls ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/boss_cdp_raw.py
 ls ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/job_summary.py
+ls ~/.hermes/skills/data-science/boss-zhipin-scraper/data/city_codes.json
 ```
 
 安装后直接在 Hermes 对话中说"帮我搜一下 BOSS直聘 上上海的 AI Agent 岗位"。
@@ -209,6 +215,8 @@ boss-zhipin-scraper/
 ├── CHANGELOG.md
 ├── LICENSE
 ├── pyproject.toml
+├── data/
+│   └── city_codes.json   # 全量城市码表
 ├── scripts/
 │   ├── boss_cdp_raw.py   # 抓取主脚本
 │   └── job_summary.py    # 抓取后摘要 + 提示词

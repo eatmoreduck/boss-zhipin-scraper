@@ -81,6 +81,8 @@ mkdir -p ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts
 cp SKILL.md ~/.hermes/skills/data-science/boss-zhipin-scraper/
 cp scripts/boss_cdp_raw.py ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/
 cp scripts/job_summary.py ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/
+mkdir -p ~/.hermes/skills/data-science/boss-zhipin-scraper/data
+cp data/city_codes.json ~/.hermes/skills/data-science/boss-zhipin-scraper/data/
 ```
 
 ### Option 2: One-line curl install
@@ -94,7 +96,10 @@ curl -sL https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-scraper/maste
 curl -sL https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-scraper/master/scripts/boss_cdp_raw.py \
   -o ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/boss_cdp_raw.py && \
 curl -sL https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-scraper/master/scripts/job_summary.py \
-  -o ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/job_summary.py
+  -o ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/job_summary.py && \
+mkdir -p ~/.hermes/skills/data-science/boss-zhipin-scraper/data && \
+curl -sL https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-scraper/master/data/city_codes.json \
+  -o ~/.hermes/skills/data-science/boss-zhipin-scraper/data/city_codes.json
 ```
 
 ### Option 3: `hermes skills install` (requires direct GitHub access)
@@ -112,6 +117,7 @@ hermes skills install https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-
 ls ~/.hermes/skills/data-science/boss-zhipin-scraper/SKILL.md
 ls ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/boss_cdp_raw.py
 ls ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/job_summary.py
+ls ~/.hermes/skills/data-science/boss-zhipin-scraper/data/city_codes.json
 ```
 
 After installing, just say in a Hermes conversation: "Search BOSS Zhipin for AI Agent jobs in Shanghai."
@@ -208,6 +214,8 @@ boss-zhipin-scraper/
 ├── CHANGELOG.md
 ├── LICENSE
 ├── pyproject.toml
+├── data/
+│   └── city_codes.json   # Full city-code map
 ├── scripts/
 │   ├── boss_cdp_raw.py   # Main scraping script
 │   └── job_summary.py    # Post-scrape summary + prompt

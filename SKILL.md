@@ -268,7 +268,10 @@ curl -sL https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-scraper/maste
 curl -sL https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-scraper/master/scripts/boss_cdp_raw.py \
   -o ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/boss_cdp_raw.py && \
 curl -sL https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-scraper/master/scripts/job_summary.py \
-  -o ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/job_summary.py
+  -o ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/job_summary.py && \
+mkdir -p ~/.hermes/skills/data-science/boss-zhipin-scraper/data && \
+curl -sL https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-scraper/master/data/city_codes.json \
+  -o ~/.hermes/skills/data-science/boss-zhipin-scraper/data/city_codes.json
 ```
 
 或克隆后手动复制：
@@ -279,4 +282,6 @@ mkdir -p ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts
 cp boss-zhipin-scraper/SKILL.md ~/.hermes/skills/data-science/boss-zhipin-scraper/
 cp boss-zhipin-scraper/scripts/boss_cdp_raw.py ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/
 cp boss-zhipin-scraper/scripts/job_summary.py ~/.hermes/skills/data-science/boss-zhipin-scraper/scripts/
+mkdir -p ~/.hermes/skills/data-science/boss-zhipin-scraper/data
+cp boss-zhipin-scraper/data/city_codes.json ~/.hermes/skills/data-science/boss-zhipin-scraper/data/
 ```
