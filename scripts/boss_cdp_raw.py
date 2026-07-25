@@ -747,7 +747,7 @@ def resolve_city(city_input):
 
     # 3. 兜底：走到这说明本地码表和 API 都解析失败
     log.warning("无法解析城市 '%s'：本地码表和 BOSS API 均未命中，且不是 9 位 city code，"
-                "将原样透传可能导致 0 搜索结果", city_input)
+                "爬取时可能导致 0 搜索结果", city_input)
     return city_input, city_input
 
 
