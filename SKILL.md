@@ -147,7 +147,7 @@ python3 "$SUMMARY_PATH" \
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--keyword` | AI Agent | 搜索关键词 |
-| `--city` | 上海 | 城市名（中文）或代码；没传时默认上海 |
+| `--city` | 上海 | 城市名（中文）或 9 位代码；没传时默认上海，无法识别的城市名会报错退出 |
 | `--pages` | 3 | 抓取页数（上限 10，每页 30 条） |
 | `--output` | ~/.boss-zhipin-scraper/job-result/... | 列表输出路径 |
 | `--detail-output` | ~/.boss-zhipin-scraper/job-result/... | 详情输出路径 |

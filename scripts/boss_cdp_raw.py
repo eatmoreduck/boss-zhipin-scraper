@@ -42,7 +42,7 @@ from datetime import datetime
 from collections import Counter
 from enum import Enum
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
-from curl_cffi import requests as curl_requests
+from urllib.request import Request, urlopen
 
 websocket = None
 requests = None
@@ -183,7 +183,7 @@ def require_runtime_dependencies(*names):
 # - 筛选项: https://www.zhipin.com/wapi/zpgeek/search/job/condition.json
 # ============================================================
 # 城市码表已外置到 data/city_codes.json（全量城市，覆盖一二三四五线），
-# 见 issue #24。resolve_city 查询链：本地静态 → 运行时拉 BOSS 接口 → 原样兜底。
+# 见 issue #24。resolve_city 查询链：本地静态 → 运行时拉 BOSS 接口 → 9 位裸码兜底。
 # 仓库内路径（开发态）与打包后路径（pip install）都在 _city_data_path() 里处理。
 CITY_DATA_FILENAME = "city_codes.json"
 
@@ -677,14 +677,32 @@ def extract_job_description(extracted, min_length=MIN_DETAIL_TEXT_LENGTH):
 # ============================================================
 # 解析城市参数（支持中文和代码）
 # ============================================================
+class CityAPIResponseError(ValueError):
+    """BOSS 城市接口返回业务错误或无效响应。"""
+
+
+class CityResolutionError(ValueError):
+    """无法把用户输入解析为有效城市码。"""
+
+
 def fetch_boss_json(url, timeout=10):
-    resp = curl_requests.get(
-        url,
-        headers={"User-Agent": "Mozilla/5.0"},
-        impersonate="chrome",
-        timeout=timeout,
-    )
-    return resp.json()
+    req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    if not isinstance(data, dict):
+        raise CityAPIResponseError(f"BOSS 城市接口返回非对象响应: {url}")
+
+    code = data.get("code")
+    if code != 0:
+        message = data.get("message") or "未知错误"
+        raise CityAPIResponseError(
+            f"BOSS 城市接口返回业务错误 code={code}, message={message}: {url}"
+        )
+    if not isinstance(data.get("zpData"), dict):
+        raise CityAPIResponseError(f"BOSS 城市接口响应缺少有效 zpData: {url}")
+    return data
+
 
 def load_live_city_maps(timeout=10):
     global _live_city_maps_cache
@@ -708,8 +726,9 @@ def load_live_city_maps(timeout=10):
                 code = item.get("code")
                 if name and code is not None:
                     name_to_code.setdefault(name, str(code))
-    except (OSError, json.JSONDecodeError, ValueError) as e:
-        log.debug(f"加载 BOSS 城市映射失败，使用内置城市映射: {e}")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError,
+            CityAPIResponseError) as e:
+        log.warning(f"加载 BOSS 在线城市映射失败: {e}")
 
     code_to_name = {code: name for name, code in name_to_code.items()}
     _live_city_maps_cache = name_to_code, code_to_name
@@ -722,13 +741,9 @@ def resolve_city(city_input):
     查询链（逐级降级）:
       1. 本地静态码表 data/city_codes.json（全量、离线可用）
       2. 运行时拉 BOSS 接口 hot/city.json + cityGroup.json（自愈）
-      3. 都查不到则原样返回（兼容用户直接传裸 city code）
+      3. 都查不到时接受 9 位裸 city code，其他输入报错
     """
     if not city_input:
-        return city_input, city_input
-
-    # 9 位纯数字视为裸 city code，直接返回，不走后续查询
-    if re.match(r'^\d{9}$', city_input):
         return city_input, city_input
 
     # 1. 本地静态码表
@@ -745,10 +760,15 @@ def resolve_city(city_input):
     if city_input in live_reverse:
         return live_reverse[city_input], city_input
 
-    # 3. 兜底：走到这说明本地码表和 API 都解析失败
-    log.warning("无法解析城市 '%s'：本地码表和 BOSS API 均未命中，且不是 9 位 city code，"
-                "爬取时可能导致 0 搜索结果", city_input)
-    return city_input, city_input
+    # 3. 仍未命中的 9 位纯数字视为用户直接传入的裸 city code
+    if re.fullmatch(r"\d{9}", city_input):
+        return city_input, city_input
+
+    raise CityResolutionError(
+        f"无法解析城市 '{city_input}'：本地城市码表和 BOSS 在线城市接口均未命中。"
+        "请传入受支持的中文城市名或 9 位 city code；已停止抓取，"
+        "避免将无效城市参数误判为 0 个岗位。"
+    )
 
 
 def list_cities(keyword=None, use_live=True):
@@ -2435,6 +2455,14 @@ def main():
 
     if not require_runtime_dependencies("requests", "websocket"):
         sys.exit(1)
+
+    # 抓取前校验城市，避免无效中文名被原样作为 city 参数继续请求。
+    if not args.input:
+        try:
+            resolve_city(args.city)
+        except CityResolutionError as e:
+            print(f"❌ {e}")
+            sys.exit(1)
 
     # 页数限制
     if args.pages > MAX_PAGES:

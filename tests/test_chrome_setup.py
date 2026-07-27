@@ -223,14 +223,77 @@ class ChromeSetupTests(unittest.TestCase):
             self.assertEqual(module.resolve_city("101060100"), ("长春", "101060100"))
 
     def test_resolve_city_fallback_to_raw(self):
-        """本地和实时都查不到时，原样返回（兼容用户传裸 code）。"""
+        """正反向映射均未命中时，仍接受 9 位裸 city code。"""
+        module = load_module()
+
+        with mock.patch.object(module, "load_local_city_map",
+                               return_value=({}, {})) as local_loader, \
+             mock.patch.object(module, "load_live_city_maps",
+                               return_value=({}, {})) as live_loader:
+            self.assertEqual(module.resolve_city("999999999"), ("999999999", "999999999"))
+        local_loader.assert_called_once_with()
+        live_loader.assert_called_once_with()
+
+    def test_resolve_city_rejects_unknown_chinese_city(self):
+        """未知中文城市不能原样作为 city 参数继续抓取。"""
         module = load_module()
 
         with mock.patch.object(module, "load_local_city_map",
                                return_value=({}, {})), \
              mock.patch.object(module, "load_live_city_maps",
                                return_value=({}, {})):
-            self.assertEqual(module.resolve_city("999999999"), ("999999999", "999999999"))
+            with self.assertRaisesRegex(module.CityResolutionError,
+                                        "无法解析城市 '不存在市'"):
+                module.resolve_city("不存在市")
+
+    def test_resolve_city_rejects_when_local_map_missing_and_live_api_fails(self):
+        """本地码表缺失且在线接口失败时明确报错。"""
+        module = load_module()
+
+        with mock.patch.object(module, "load_local_city_map",
+                               return_value=({}, {})), \
+             mock.patch.object(module, "fetch_boss_json",
+                               side_effect=OSError("network unavailable")):
+            with self.assertLogs(module.log, level="WARNING") as logs:
+                with self.assertRaises(module.CityResolutionError):
+                    module.resolve_city("长春")
+        self.assertIn("加载 BOSS 在线城市映射失败", "\n".join(logs.output))
+
+    def test_fetch_boss_json_rejects_nonzero_business_code(self):
+        """HTTP 200 下的 code: 35 不能静默当作空城市表。"""
+        module = load_module()
+        response = mock.MagicMock()
+        response.read.return_value = json.dumps({
+            "code": 35,
+            "message": "您的IP地址存在异常行为.",
+            "zpData": {},
+        }).encode("utf-8")
+        response.__enter__.return_value = response
+
+        with mock.patch.object(module, "urlopen", return_value=response):
+            with self.assertRaisesRegex(module.CityAPIResponseError,
+                                        "code=35"):
+                module.fetch_boss_json(module.HOT_CITY_URL)
+
+    def test_main_rejects_unknown_city_before_login_probe(self):
+        """CLI 城市预校验失败后以非零状态退出，不进入登录探测。"""
+        module = load_module()
+
+        with mock.patch.object(sys, "argv", [
+                "boss_cdp_raw.py", "--city", "不存在市",
+        ]), \
+             mock.patch.object(module, "require_runtime_dependencies",
+                               return_value=True), \
+             mock.patch.object(module, "resolve_city",
+                               side_effect=module.CityResolutionError("无法解析城市")), \
+             mock.patch.object(module, "check_login_state") as login_probe, \
+             redirect_stdout(io.StringIO()) as output:
+            with self.assertRaises(SystemExit) as exit_context:
+                module.main()
+
+        self.assertEqual(exit_context.exception.code, 1)
+        self.assertIn("无法解析城市", output.getvalue())
+        login_probe.assert_not_called()
 
     def test_resolve_city_empty_input(self):
         module = load_module()
