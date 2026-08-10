@@ -1123,53 +1123,67 @@ def write_detail_csv(csv_path, details):
 # ============================================================
 # 增量写入 JSON
 # ============================================================
-def append_json(path, new_jobs):
-    """追加 jobs 到 JSON 文件，每条按 job_id 去重"""
-    existing = []
-    seen_ids = set()
-    data = {}
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            existing = data.get("jobs", [])
-            seen_ids = {j.get("job_id", "") for j in existing}
-        except (json.JSONDecodeError, OSError, ValueError):
-            data = {}
-    added = 0
-    for j in new_jobs:
-        if j.get("job_id") not in seen_ids:
-            existing.append(j)
-            seen_ids.add(j.get("job_id", ""))
-            added += 1
-    data["jobs"] = existing
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    return added
+def merge_unique(existing, incoming, key="job_id", new_overrides=False):
+    """按 key 合并去重。
+
+    Args:
+        existing: 已有记录列表
+        incoming: 新记录列表
+        key: 去重字段
+        new_overrides: True 时新记录覆盖旧记录（同 key 保留新的）；False 时旧记录优先
+
+    Returns:
+        合并后的列表
+    """
+    if new_overrides:
+        by_key = {}
+        for item in existing:
+            if isinstance(item, dict) and item.get(key):
+                by_key[item.get(key)] = item
+        for item in incoming:
+            if isinstance(item, dict) and item.get(key):
+                by_key[item.get(key)] = item
+        return list(by_key.values())
+
+    seen = {item.get(key, "") for item in existing if isinstance(item, dict)}
+    merged = list(existing)
+    for item in incoming:
+        if isinstance(item, dict) and item.get(key, "") not in seen:
+            seen.add(item.get(key, ""))
+            merged.append(item)
+    return merged
+
+
+def _atomic_write_json(path, payload):
+    """先写临时文件再原子替换，避免进程中断留下半截 JSON 覆盖旧数据。"""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp_path = f"{path}.tmp{os.getpid()}"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 def flush_jobs(path, meta, jobs):
     """每次有新数据就全量刷写（jobs 去重后），保证异常退出也能保留"""
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    # 合并已有文件
     existing_jobs = []
-    seen_ids = set()
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 old = json.load(f)
             existing_jobs = old.get("jobs", [])
-            seen_ids = {j.get("job_id", "") for j in existing_jobs}
         except (json.JSONDecodeError, OSError, ValueError):
             pass
-    for j in jobs:
-        if j.get("job_id") not in seen_ids:
-            existing_jobs.append(j)
-            seen_ids.add(j.get("job_id", ""))
-    meta["total"] = len(existing_jobs)
-    meta["jobs"] = existing_jobs
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
+    merged = merge_unique(existing_jobs, jobs)
+    meta["total"] = len(merged)
+    meta["jobs"] = merged
+    _atomic_write_json(path, meta)
 
 
 # ============================================================
@@ -1193,16 +1207,8 @@ def merge_jobs(external_path, new_jobs):
         return new_jobs
 
     old_jobs = old_data.get("jobs", [])
-    merged = list(old_jobs)
-    seen_ids = {j.get("job_id", "") for j in merged}
-
-    added = 0
-    for j in new_jobs:
-        if j.get("job_id") not in seen_ids:
-            merged.append(j)
-            seen_ids.add(j.get("job_id", ""))
-            added += 1
-
+    merged = merge_unique(old_jobs, new_jobs)
+    added = len(merged) - len(old_jobs)
     print(f"合并: 旧文件 {len(old_jobs)} 条 + 新抓取 {len(new_jobs)} 条 = {len(merged)} 条 (新增 {added})")
     return merged
 
@@ -1243,16 +1249,7 @@ def merge_details(external_path, new_details):
 
 def merge_details_from_lists(old_details, new_details):
     """把两份详情列表按 job_id 合并去重，new_details 优先（同 id 用新覆盖旧）。"""
-    by_id = {}
-    for d in old_details:
-        jid = d.get("job_id", "") if isinstance(d, dict) else ""
-        if jid:
-            by_id[jid] = d
-    for d in new_details:
-        jid = d.get("job_id", "") if isinstance(d, dict) else ""
-        if jid:
-            by_id[jid] = d
-    return list(by_id.values())
+    return merge_unique(old_details, new_details, new_overrides=True)
 
 
 # ============================================================
@@ -1669,9 +1666,7 @@ def scrape_details(list_data, max_details=None, output_path=None,
 
         # 每抓完一个详情就写入，异常退出也能保留
         if output_path:
-            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-            with open(output_path, "w", encoding="utf-8") as f:
-                json.dump(results, f, ensure_ascii=False, indent=2)
+            _atomic_write_json(output_path, results)
 
         ws.send("Target.closeTarget", {"targetId": tid})
         ws.close()
@@ -1681,9 +1676,7 @@ def scrape_details(list_data, max_details=None, output_path=None,
         time.sleep(gap)
 
     # 最终保存（dirname 为空时回退到当前目录，与循环内/其它写文件处保持一致）
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(output_path, results)
     print(f"\n详情已保存: {output_path}")
 
     if fmt == "csv":
@@ -1885,16 +1878,6 @@ def analyze(list_data, details=None, search_keyword=""):
         print("  提示: 用 --detail 抓取 JD 详情后可获得更精准的简历建议")
 
 
-def parse_jobs_eval_value(value):
-    if not value:
-        return []
-    try:
-        parsed = json.loads(value) if isinstance(value, str) else value
-    except (json.JSONDecodeError, ValueError, TypeError):
-        return []
-    return parsed if isinstance(parsed, list) else []
-
-
 def has_usable_smoke_jobs(jobs):
     for job in jobs:
         if not isinstance(job, dict):
@@ -1925,7 +1908,7 @@ def run_smoke_test(cdp_port=DEFAULT_CDP_PORT):
         time.sleep(4)
         api_url = f"{API_JOB_LIST_PATH}?{urlencode({'scene': '1', 'query': LOGIN_PROBE_QUERY, 'city': city_code, 'page': 1, 'pageSize': 5})}"
         api_js = FETCH_API_JS_TEMPLATE.replace("__API_URL__", api_url)
-        jobs = parse_jobs_eval_value(cdp.eval_js(api_js, sid))
+        jobs = parse_api_jobs_eval_value(cdp.eval_js(api_js, sid))
         cdp.send("Target.closeTarget", {"targetId": tid})
         cdp.close()
 
@@ -1975,7 +1958,7 @@ def run_check(cdp_port=DEFAULT_CDP_PORT):
             resp = requests.get(f"http://127.0.0.1:{cdp_port}/json/version", timeout=5)
             data = resp.json()
             browser = data.get("Browser", "未知")
-            print(f"  ✅ 通过 — Chrome {browser}")
+            print(f"  ✅ 通过 — CDP 服务: {browser}")
         except (requests.ConnectionError, requests.Timeout):
             print(f"  ❌ 失败 — 无法连接 127.0.0.1:{cdp_port}")
             print(f"     请先启动 Chrome CDP: python3 {__file__} --setup-chrome")
@@ -2330,6 +2313,11 @@ def run_stop_chrome():
 # main
 # ============================================================
 def main():
+    # Windows 控制台默认 GBK 无法编码输出中的 emoji/部分中文，会直接 UnicodeEncodeError
+    # （实测 73 个单测中 8 个因此失败）。统一重配为 UTF-8，输出用 errors=replace 兜底。
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     p = argparse.ArgumentParser(
         description=f"BOSS直聘抓取 + 分析 (CDP Raw) v{__version__}",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -2540,9 +2528,7 @@ def main():
         # 若处于合并流程，把旧详情并入本次抓取结果并重新落盘，保证 --merge 后详情不丢失
         if merged_details and args.detail_output:
             details = merge_details_from_lists(merged_details, details)
-            os.makedirs(os.path.dirname(args.detail_output) or ".", exist_ok=True)
-            with open(args.detail_output, "w", encoding="utf-8") as f:
-                json.dump(details, f, ensure_ascii=False, indent=2)
+            _atomic_write_json(args.detail_output, details)
             print(f"合并详情已保存: {args.detail_output}")
             if args.format == "csv":
                 detail_csv = args.detail_output.rsplit(".", 1)[0] + ".csv"

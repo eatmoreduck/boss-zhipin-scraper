@@ -4,12 +4,20 @@ import io
 import json
 import os
 import pathlib
+import platform
 import re
 import subprocess
 import sys
 import unittest
 from contextlib import redirect_stdout
 from unittest import mock
+
+
+# Windows 控制台默认 GBK，测试断言/回溯含 emoji 会 UnicodeEncodeError；
+# 统一重配为 UTF-8，保证测试不依赖外部 PYTHONIOENCODING 环境变量。
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 SCRIPT_PATH = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "boss_cdp_raw.py"
@@ -528,6 +536,85 @@ class ChromeSetupTests(unittest.TestCase):
         detail = module.build_detail_record(job, extracted)
 
         self.assertEqual(detail["boss_active_status"], "本周活跃")
+
+    def test_merge_unique_deduplicates_by_job_id_keeping_old(self):
+        module = load_module()
+        existing = [{"job_id": "a", "title": "old-a"}, {"job_id": "b", "title": "old-b"}]
+        incoming = [{"job_id": "b", "title": "new-b"}, {"job_id": "c", "title": "new-c"}]
+
+        merged = module.merge_unique(existing, incoming)
+
+        self.assertEqual([j["job_id"] for j in merged], ["a", "b", "c"])
+        self.assertEqual(merged[1]["title"], "old-b", "同 id 应保留旧记录")
+
+    def test_merge_unique_new_overrides_old(self):
+        module = load_module()
+        existing = [{"job_id": "a", "title": "old-a"}]
+        incoming = [{"job_id": "a", "title": "new-a"}, {"job_id": "b", "title": "new-b"}]
+
+        merged = module.merge_unique(existing, incoming, new_overrides=True)
+
+        self.assertEqual([j["job_id"] for j in merged], ["a", "b"])
+        self.assertEqual(merged[0]["title"], "new-a", "同 id 应保留新记录")
+
+    def test_merge_unique_skips_non_dict_items_without_crashing(self):
+        module = load_module()
+        existing = [{"job_id": "a", "title": "old-a"}, "not-a-dict"]
+        incoming = [None, {"job_id": "b", "title": "new-b"}, 42]
+
+        merged = module.merge_unique(existing, incoming)
+        # existing 非 dict 项原样保留（不静默丢弃旧数据），incoming 非 dict 项跳过
+        self.assertEqual(len(merged), 3)
+        dict_items = [j for j in merged if isinstance(j, dict)]
+        self.assertEqual([j["job_id"] for j in dict_items], ["a", "b"])
+
+    def test_atomic_write_json_writes_payload_and_cleans_tmp(self):
+        module = load_module()
+        with tempfile_profile() as paths:
+            target = str(paths["cdp_profile"] / "out.json")
+            payload = {"jobs": [{"job_id": "a"}]}
+
+            module._atomic_write_json(target, payload)
+
+            with open(target, "r", encoding="utf-8") as f:
+                self.assertEqual(json.load(f), payload)
+            leftovers = [
+                name for name in os.listdir(paths["cdp_profile"])
+                if name.startswith("out.json.tmp")
+            ]
+            self.assertEqual(leftovers, [], "失败/成功路径都不应残留 .tmp 文件")
+
+    def test_atomic_write_json_preserves_original_on_serialize_failure(self):
+        module = load_module()
+        with tempfile_profile() as paths:
+            target = str(paths["cdp_profile"] / "out.json")
+            os.makedirs(paths["cdp_profile"], exist_ok=True)
+            with open(target, "w", encoding="utf-8") as f:
+                f.write('{"keep": true}')
+
+            with mock.patch.object(
+                module.json, "dump", side_effect=TypeError("cannot serialize")
+            ):
+                with self.assertRaises(TypeError):
+                    module._atomic_write_json(target, {"bad": object()})
+
+            with open(target, "r", encoding="utf-8") as f:
+                self.assertEqual(json.load(f), {"keep": True}, "失败时不应破坏原文件")
+
+    def test_flush_jobs_deduplicates_across_incremental_writes(self):
+        module = load_module()
+        with tempfile_profile() as paths:
+            target = str(paths["cdp_profile"] / "jobs.json")
+            meta = {"keyword": "Java"}
+
+            module.flush_jobs(target, dict(meta), [{"job_id": "a"}, {"job_id": "b"}])
+            module.flush_jobs(target, dict(meta), [{"job_id": "b"}, {"job_id": "c"}])
+
+            with open(target, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.assertEqual([j["job_id"] for j in data["jobs"]], ["a", "b", "c"])
+            self.assertEqual(data["total"], 3)
+            self.assertEqual(data["keyword"], "Java")
 
     def test_detail_extractor_never_uses_body_text_as_jd_fallback(self):
         module = load_module()
@@ -1118,10 +1205,9 @@ class ChromeSetupTests(unittest.TestCase):
         fake_requests.get.return_value = type("Resp", (), {"status_code": 200})()
 
         with tempfile_profile() as paths:
-            ps_output = (
-                "123 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome "
-                "--remote-debugging-port=9333 --user-data-dir=/tmp/chrome-cdp-data\n"
-            )
+            ps_output = process_query_stdout([
+                (123, chrome_cmdline(9333, "/tmp/chrome-cdp-data")),
+            ])
             with mock.patch.object(module, "DEFAULT_CDP_DATA_DIR", str(paths["cdp_profile"])), \
                     mock.patch.object(module, "requests", fake_requests), \
                     mock.patch.object(module.subprocess, "run", return_value=type("Completed", (), {"stdout": ps_output, "returncode": 0})()), \
@@ -1136,10 +1222,9 @@ class ChromeSetupTests(unittest.TestCase):
         fake_requests.get.return_value = type("Resp", (), {"status_code": 200})()
 
         with tempfile_profile() as paths:
-            ps_output = (
-                "123 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome "
-                f"--remote-debugging-port=9333 --user-data-dir={paths['cdp_profile']}\n"
-            )
+            ps_output = process_query_stdout([
+                (123, chrome_cmdline(9333, str(paths["cdp_profile"]))),
+            ])
             with mock.patch.object(module, "DEFAULT_CDP_DATA_DIR", str(paths["cdp_profile"])), \
                     mock.patch.object(module, "requests", fake_requests), \
                     mock.patch.object(module.subprocess, "run", return_value=type("Completed", (), {"stdout": ps_output, "returncode": 0})()), \
@@ -1156,10 +1241,9 @@ class ChromeSetupTests(unittest.TestCase):
         fake_requests.get.return_value = type("Resp", (), {"status_code": 200})()
 
         with tempfile_profile() as paths:
-            ps_output = (
-                "123 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome "
-                f"--remote-debugging-port=9333 --user-data-dir={paths['cdp_profile']}\n"
-            )
+            ps_output = process_query_stdout([
+                (123, chrome_cmdline(9333, str(paths["cdp_profile"]))),
+            ])
             with mock.patch.object(module, "DEFAULT_CDP_DATA_DIR", str(paths["cdp_profile"])), \
                     mock.patch.object(module, "requests", fake_requests), \
                     mock.patch.object(module.subprocess, "run", return_value=type("Completed", (), {"stdout": ps_output, "returncode": 0})()), \
@@ -1172,12 +1256,10 @@ class ChromeSetupTests(unittest.TestCase):
         module = load_module()
 
         with tempfile_profile() as paths:
-            ps_output = (
-                "123 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome "
-                f"--remote-debugging-port=9333 --user-data-dir={paths['cdp_profile']}\n"
-                "456 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome "
-                "--remote-debugging-port=9334 --user-data-dir=/tmp/other-profile\n"
-            )
+            ps_output = process_query_stdout([
+                (123, chrome_cmdline(9333, str(paths["cdp_profile"]))),
+                (456, chrome_cmdline(9334, "/tmp/other-profile")),
+            ])
             with mock.patch.object(module.subprocess, "run", return_value=type("Completed", (), {"stdout": ps_output, "returncode": 0})()):
                 self.assertEqual(module.chrome_pids_for_user_data_dir(str(paths["cdp_profile"])), [123])
                 self.assertEqual(module.chrome_user_data_dirs_for_cdp_port(9333), [str(paths["cdp_profile"])])
@@ -1272,6 +1354,8 @@ class ChromeSetupTests(unittest.TestCase):
             [sys.executable, str(SCRIPT_PATH), "--help"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
 
@@ -1312,6 +1396,30 @@ class tempfile_profile:
 def fake_run(calls, *args, **kwargs):
     calls["run"].append(args[0])
     return type("Completed", (), {"stdout": "", "returncode": 0})()
+
+
+def chrome_cmdline(cdp_port, user_data_dir):
+    """返回符合当前平台的 chrome 命令行（unquoted user-data-dir，测试 unquoted 解析）。"""
+    if platform.system() == "Windows":
+        exe = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        return f'{exe} --remote-debugging-port={cdp_port} --user-data-dir={user_data_dir}'
+    return (
+        f"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome "
+        f"--remote-debugging-port={cdp_port} --user-data-dir={user_data_dir}"
+    )
+
+
+def process_query_stdout(entries):
+    """把 (pid, cmdline) 列表转成 iter_chrome_process_commands 当前平台的 mock 输出。
+
+    Windows 分支解析 PowerShell ConvertTo-Json 输出；POSIX 分支解析 ps 行文本。
+    这两个分支的输出格式不同，测试必须按平台提供对应格式，否则在另一平台解析为空。
+    """
+    if platform.system() == "Windows":
+        return json.dumps(
+            [{"ProcessId": pid, "CommandLine": cmdline} for pid, cmdline in entries]
+        )
+    return "".join(f"{pid} {cmdline}\n" for pid, cmdline in entries)
 
 
 ROOT_PATH = SCRIPT_PATH.parents[1]
