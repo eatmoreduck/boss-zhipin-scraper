@@ -54,7 +54,7 @@ Right after scraping you get: salary ranges, experience requirements, top skill 
 - Incremental writes (no data loss on crash)
 - One-shot environment check + persistent isolated Chrome CDP profile
 - Multi-dimension filters (scale, funding, salary, experience, degree, industry)
-- macOS + Linux support (a Windows code path is reserved but untested — not guaranteed to work)
+- macOS + Linux support; Windows is verified by unit tests and basic CLI checks (GBK console crash fixed), real scraping flows still welcome feedback
 
 <details>
 <summary>🔍 Why not a Selenium / Playwright crawler?</summary>

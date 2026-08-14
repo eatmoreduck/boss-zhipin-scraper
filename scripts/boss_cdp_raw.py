@@ -1161,6 +1161,9 @@ def _atomic_write_json(path, payload):
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
+            # 落盘前刷出并 fsync，极端断电场景下数据不丢（review 建议）
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp_path, path)
     finally:
         if os.path.exists(tmp_path):
