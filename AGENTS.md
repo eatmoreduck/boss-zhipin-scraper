@@ -55,3 +55,5 @@ SKILL.md / README(.en).md / CHANGELOG.md / CONTRIBUTING.md
 **合并惯例**：squash merge，标题带 `(#PR号)` 后缀（如 `fix: ...(#55)`）；PR 描述含 `Fixes #N` / `Closes #N` 时合并会自动关闭对应 issue，只提 `#N`（普通引用）则不会。
 
 **先开 issue 再动手**：非平凡的改动（bug 修复、新功能、文档补充）按仓库 `CONTRIBUTING.md` 的规范，先在 Issues 开一条说明「改什么 / 为什么 / 怎么改」，讨论清楚后再起新分支提交。issue 正文要结构化（问题 / 现状 / 根因 / 建议 / 影响），并标注改动范围（哪些逻辑受影响、哪些不动）。
+
+**issue 分诊打标**：处理/关闭 issue 时按 `CONTRIBUTING.md` 的「Issue 标签约定」打标签；`wontfix` / `invalid` 关闭前必须留说明理由的回复。
