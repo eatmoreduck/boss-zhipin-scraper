@@ -8,6 +8,11 @@
 - 城市码表外置为 `data/city_codes.json`（全量 300+ 城市，覆盖一二三四五线），新增 `--list-cities [关键词]` 命令查看支持的城市；`resolve_city` 查询链改为「本地静态码表 → 运行时拉 BOSS 接口 → 9 位裸码兜底」。城市码表打进 wheel，`pip install` 用户也可用。（#24）
 
 ### 修复
+- Windows 兼容：`main()` 入口将 stdout/stderr 重配为 UTF-8，修复 Windows GBK 控制台遇到 emoji（✅❌⚠️ 等）输出直接 `UnicodeEncodeError` 崩溃的问题（实测此前 73 个单测中 8 个因此失败）
+- JSON 落盘改为原子写入（临时文件 + `os.replace`）：进程中断不再留下半截 JSON 覆盖旧数据；`flush_jobs`、详情页写入与 `--merge` 详情落盘统一走 `_atomic_write_json`
+- `--check` 的 CDP 连通检查不再把任意 CDP 服务误报为「Chrome」，改为输出实际服务标识
+- 清理死代码与重复实现：删除无调用方的 `append_json`；`flush_jobs`/`merge_jobs`/`merge_details_from_lists` 的读-去重-写收敛到 `merge_unique`；`parse_jobs_eval_value` 与 `parse_api_jobs_eval_value` 合并（smoke test 改用后者，行为不变）
+- 测试平台适配：Chrome 进程查询的 mock 输出改为按平台生成（Windows 分支解析 PowerShell JSON、POSIX 分支解析 ps 文本），修复 Windows 上 3 个既有测试失败；`test_help_does_not_require_cdp_runtime_dependencies` 显式指定 UTF-8 解码；新增 `merge_unique` / `_atomic_write_json` / `flush_jobs` 单元测试（全量 92 个测试通过）
 - 城市解析先执行本地及在线码表的正反向映射，再接受未收录的 9 位裸城市码；未知城市名现在会在抓取前明确报错退出。在线城市接口同时校验业务 `code`，不再把 `code: 35` 等风控响应静默当作空码表
 - 登录探测识别 BOSS 风控码 `code: 37`「您的环境存在异常」为限制状态（RESTRICTED），并对未知风控码按 message 关键字（环境存在异常、访问频繁、安全校验等）兜底识别；避免已登录但被风控/限流的用户被误判为「登录探测响应异常」而无法继续。（#33）
 - 登录探测改为区分可用、未登录、限制、空结果和响应异常；每轮仅请求一次并采用有上限的退避等待，`code: 31` 等明确限制会立即停止。探测请求现已纳入全局请求预算，CLI 不再把风控或异常统一提示为未登录。（#31）
@@ -21,6 +26,7 @@
 - API URL filter 改用 `urlencode`（原字符串拼接，filter 值含特殊字符会出错）
 
 ### 变更
+- 平台支持声明更新：Windows 已通过单元测试与基础 CLI 验证（GBK 控制台崩溃等已修复），README 中英双语同步调整（此前 v2.0.0 撤回的"未经实测"声明在本修复后更新）
 - 平台支持声明改为 macOS + Linux（Windows 代码分支保留但未经实测，不再声称支持，避免过度承诺）
 - `pyproject.toml` 删除空的 `[csv]` extra（csv 是标准库）
 - SKILL.md 脚本路径解析改用 Python `os.path.realpath`（macOS 自带 `readlink` 无 `-f`）

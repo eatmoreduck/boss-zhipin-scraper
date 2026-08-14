@@ -56,7 +56,7 @@ python3 scripts/job_summary.py
 - 增量写入（异常退出不丢数据）
 - 一键环境检查 + 持久隔离 Chrome CDP profile
 - 多维筛选（规模、融资、薪资、经验、学历、行业）
-- macOS + Linux 支持（Windows 代码分支已预留，未经实测，不保证可用）
+- macOS + Linux 支持；Windows 已通过单元测试与基础 CLI 验证（GBK 控制台崩溃已修复），真实抓取链路仍欢迎反馈
 
 <details>
 <summary>🔍 为什么不选 Selenium / Playwright 类爬虫？</summary>
