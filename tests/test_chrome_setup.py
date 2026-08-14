@@ -5,9 +5,11 @@ import json
 import os
 import pathlib
 import platform
+import random
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from unittest import mock
@@ -58,6 +60,7 @@ class ChromeSetupTests(unittest.TestCase):
             {"result": {"targetId": "target-1"}},
             {"result": {"sessionId": "session-1"}},
             {"result": {}},
+            {"result": {}},
         ]
 
         result = module.create_page_session(cdp)
@@ -73,6 +76,12 @@ class ChromeSetupTests(unittest.TestCase):
                 mock.call(
                     "Target.attachToTarget",
                     {"targetId": "target-1", "flatten": True},
+                ),
+                # 后台标签页开启焦点仿真：无限滚动加载依赖页面可见且有焦点
+                mock.call(
+                    "Emulation.setFocusEmulationEnabled",
+                    {"enabled": True},
+                    "session-1",
                 ),
                 mock.call(
                     "Page.addScriptToEvaluateOnNewDocument",
@@ -754,13 +763,17 @@ class ChromeSetupTests(unittest.TestCase):
             "",
         )
 
-    def test_fetch_api_js_maps_bossonline_fallback(self):
+    def test_map_api_job_maps_bossonline_fallback(self):
         module = load_module()
-        js = module.FETCH_API_JS_TEMPLATE
 
-        self.assertIn("j.activeTimeDesc", js)
-        self.assertIn("j.bossOnline", js)
-        self.assertIn("boss_active_status: j.activeTimeDesc || (j.bossOnline ?", js)
+        with_desc = module.map_api_job({"jobName": "A", "activeTimeDesc": "今日活跃"})
+        self.assertEqual(with_desc["boss_active_status"], "今日活跃")
+
+        online_only = module.map_api_job({"jobName": "B", "bossOnline": True})
+        self.assertEqual(online_only["boss_active_status"], "在线")
+
+        neither = module.map_api_job({"jobName": "C"})
+        self.assertEqual(neither["boss_active_status"], "")
 
     def test_extract_job_description_removes_recruiter_card_before_safety_footer(self):
         module = load_module()
@@ -812,47 +825,182 @@ class ChromeSetupTests(unittest.TestCase):
 
     def test_api_extraction_keeps_detail_context_fields(self):
         module = load_module()
+        mapped = module.map_api_job({
+            "jobName": "Java",
+            "securityId": "sec value",
+            "lid": "lid-123",
+            "encryptJobId": "enc1",
+            "encryptBossId": "boss1",
+            "encryptBrandId": "brand1",
+        })
 
-        self.assertIn("security_id: j.securityId", module.FETCH_API_JS_TEMPLATE)
-        self.assertIn("lid: j.lid", module.FETCH_API_JS_TEMPLATE)
-        self.assertIn("encrypt_job_id: j.encryptJobId", module.FETCH_API_JS_TEMPLATE)
+        self.assertEqual(mapped["security_id"], "sec value")
+        self.assertEqual(mapped["lid"], "lid-123")
+        self.assertEqual(mapped["encrypt_job_id"], "enc1")
+        self.assertEqual(mapped["encrypt_boss_id"], "boss1")
+        self.assertEqual(mapped["encrypt_brand_id"], "brand1")
+        self.assertEqual(mapped["job_link"], "https://www.zhipin.com/job_detail/enc1.html")
+        self.assertEqual(mapped["company_link"], "https://www.zhipin.com/gongsi/brand1.html")
 
-    def test_dom_fallback_is_opt_in(self):
+    def test_map_api_job_maps_full_raw_fields(self):
         module = load_module()
+        mapped = module.map_api_job({
+            "jobName": "Python 工程师",
+            "salaryDesc": "20-40K·16薪",
+            "cityName": "上海",
+            "areaDistrict": "浦东新区",
+            "businessDistrict": "张江",
+            "jobExperience": "3-5年",
+            "jobDegree": "本科",
+            "brandName": "示例公司",
+            "brandScaleName": "1000-9999人",
+            "skills": ["Python", "Docker"],
+            "welfareList": ["五险一金", "带薪年假"],
+        })
 
-        self.assertFalse(module.should_use_dom_fallback([], allow_dom_fallback=False))
-        self.assertTrue(module.should_use_dom_fallback([], allow_dom_fallback=True))
-        self.assertFalse(module.should_use_dom_fallback([{"title": "Java"}], allow_dom_fallback=True))
+        self.assertEqual(mapped["salary"], "20-40K·16薪")
+        self.assertEqual(mapped["salary_source"], "api")
+        self.assertEqual(mapped["location"], "上海·浦东新区·张江")
+        self.assertEqual(mapped["tags"], "3-5年 | 本科")
+        self.assertEqual(mapped["skills"], "Python | Docker")
+        self.assertEqual(mapped["welfare"], "五险一金 | 带薪年假")
 
-    def test_api_job_parser_rejects_error_rows(self):
+        # 缺薪资时 salary_source 标记 api_empty；「不限」不进 tags
+        empty = module.map_api_job({"jobName": "X", "jobDegree": "不限"})
+        self.assertEqual(empty["salary_source"], "api_empty")
+        self.assertEqual(empty["tags"], "")
+
+    def test_map_api_jobs_skips_invalid_rows(self):
         module = load_module()
+        data = {
+            "code": 0,
+            "zpData": {"jobList": [
+                {"jobName": "Java", "salaryDesc": "20-40K"},
+                "not-a-dict",
+                None,
+            ]},
+        }
 
-        self.assertEqual(module.parse_api_jobs_eval_value(json.dumps([{"error": 403}])), [])
-        self.assertEqual(
-            module.parse_api_jobs_eval_value(json.dumps([{"title": "Java", "job_link": "https://example.com"}])),
-            [{"title": "Java", "job_link": "https://example.com"}],
-        )
+        jobs = module.map_api_jobs(data)
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["title"], "Java")
+        self.assertEqual(module.map_api_jobs(None), [])
+        self.assertEqual(module.map_api_jobs({"zpData": {}}), [])
 
     def test_login_probe_uses_one_budgeted_request(self):
         module = load_module()
-        cdp = mock.Mock()
-        cdp.eval_js.return_value = json.dumps({
-            "httpStatus": 200,
-            "body": json.dumps({
-                "code": 0,
-                "zpData": {"jobList": [{"jobName": "Java", "salaryDesc": "20-40K"}]},
-            }),
+        body = json.dumps({
+            "code": 0,
+            "zpData": {"jobList": [{"jobName": "Java", "salaryDesc": "20-40K"}]},
         })
+        cdp = FakeCaptureCDP(
+            pending_batches=[make_joblist_events("r1")],
+            responses={"r1": body},
+        )
         module._request_counter = 0
 
-        result = module.probe_login_state(cdp, "sid", query="Java", city_code="101020100")
+        result = module.probe_login_state(cdp, "fake-session", query="Java", city_code="101020100")
 
         self.assertIs(result.status, module.LoginProbeStatus.AVAILABLE)
-        self.assertEqual(cdp.eval_js.call_count, 1)
+        # 被动捕获：只导航一次，不发注入请求（无 Runtime.evaluate/XHR）
         self.assertEqual(module._request_counter, 1)
-        probe_js = cdp.eval_js.call_args.args[0]
-        self.assertIn("query=Java", probe_js)
-        self.assertIn("city=101020100", probe_js)
+        self.assertEqual(cdp.sent_methods.count("Page.navigate"), 1)
+        self.assertNotIn("Runtime.evaluate", cdp.sent_methods)
+
+    def test_login_probe_navigates_real_search_url(self):
+        module = load_module()
+        body = json.dumps({
+            "code": 0,
+            "zpData": {"jobList": [{"jobName": "Java", "salaryDesc": "20-40K"}]},
+        })
+        cdp = FakeCaptureCDP(
+            pending_batches=[make_joblist_events("r1")],
+            responses={"r1": body},
+        )
+
+        module.probe_login_state(cdp, "fake-session", query="AI Agent", city_code="101010100")
+
+        navigations = [p for m, p in cdp.sent if m == "Page.navigate"]
+        self.assertEqual(len(navigations), 1)
+        self.assertIn("query=AI+Agent", navigations[0]["url"])
+        self.assertIn("city=101010100", navigations[0]["url"])
+        self.assertIn("/web/geek/job", navigations[0]["url"])
+
+    def test_login_probe_reports_timeout_when_no_response(self):
+        module = load_module()
+        cdp = FakeCaptureCDP()  # 页面一直不发自带请求
+        module._request_counter = 0
+
+        result = module.probe_login_state(cdp, "fake-session", timeout=0.2)
+
+        self.assertIs(result.status, module.LoginProbeStatus.RESPONSE_ERROR)
+        self.assertTrue(result.retryable)
+        self.assertEqual(module._request_counter, 1)
+
+    def _run_scrape_list(self, module, cdp, output_path, pages=2):
+        """以 mock 掉节奏/连接的方式跑一遍 scrape_list，返回其结果。
+
+        module 必须与断言用的同一个 load_module() 实例（每次 load_module
+        返回新模块对象，异常类/全局计数器不能跨实例比较）。
+        """
+        module._request_counter = 0
+        with mock.patch.object(module, "CDPSession", lambda port=9222: cdp), \
+                mock.patch.object(module, "resolve_city", return_value=("上海", "101020100")), \
+                mock.patch("time.sleep", lambda s: None), \
+                mock.patch.object(module, "random", random.Random(7)):
+            return module.scrape_list(
+                "Java", "上海", pages, {}, output_path, cdp_port=9333,
+            )
+
+    def test_scrape_list_captures_pages_via_network_events(self):
+        module = load_module()
+        page1 = {"code": 0, "zpData": {"hasMore": True, "jobList": [
+            {"jobName": "A", "salaryDesc": "10K", "encryptJobId": "e1"},
+            {"jobName": "B", "salaryDesc": "20K", "encryptJobId": "e2"},
+        ]}}
+        page2 = {"code": 0, "zpData": {"hasMore": False, "jobList": [
+            {"jobName": "C", "salaryDesc": "30K", "encryptJobId": "e3"},
+            {"jobName": "D", "salaryDesc": "40K", "encryptJobId": "e4"},
+        ]}}
+        cdp = FakeCaptureCDP(
+            pending_batches=[make_joblist_events("r1"), make_joblist_events("r2")],
+            responses={"r1": json.dumps(page1), "r2": json.dumps(page2)},
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = str(pathlib.Path(tmp) / "jobs.json")
+            result = self._run_scrape_list(module, cdp, output_path, pages=2)
+
+        # 两页各 2 条，全部来自被动捕获（无注入 XHR：evaluate 只用于滚动）
+        self.assertEqual(result["total"], 4)
+        self.assertEqual([j["title"] for j in result["jobs"]], ["A", "B", "C", "D"])
+        self.assertTrue(all(j["salary_source"] == "api" for j in result["jobs"]))
+        self.assertEqual(module._request_counter, 2)
+        self.assertEqual(cdp.sent_methods.count("Page.navigate"), 1)
+        evaluate_bodies = [
+            p.get("expression", "") for m, p in cdp.sent if m == "Runtime.evaluate"
+        ]
+        self.assertTrue(evaluate_bodies)
+        self.assertFalse(any("XMLHttpRequest" in js for js in evaluate_bodies))
+
+    def test_scrape_list_gates_on_risk_control_first_response(self):
+        module = load_module()
+        restricted = {"code": 37, "message": "您的环境存在异常."}
+        cdp = FakeCaptureCDP(
+            pending_batches=[make_joblist_events("r1")],
+            responses={"r1": json.dumps(restricted)},
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = str(pathlib.Path(tmp) / "jobs.json")
+            with self.assertRaises(module.LoginGateError) as ctx:
+                self._run_scrape_list(module, cdp, output_path, pages=3)
+
+        self.assertIn("已停止抓取", str(ctx.exception))
+        self.assertIn("code: 37", str(ctx.exception))
+        # 风控在第一页就终止，不应继续滚动翻页
+        self.assertEqual(module._request_counter, 1)
 
     def test_wait_for_login_rotates_targets_and_backs_off(self):
         module = load_module()
@@ -1396,6 +1544,60 @@ class tempfile_profile:
 def fake_run(calls, *args, **kwargs):
     calls["run"].append(args[0])
     return type("Completed", (), {"stdout": "", "returncode": 0})()
+
+
+def make_joblist_events(request_id, url="https://www.zhipin.com/wapi/zpgeek/search/joblist.json?_=1"):
+    """合成一次已完成 joblist 请求的 Network 事件三件套。"""
+    return [
+        {"method": "Network.requestWillBeSent",
+         "params": {"requestId": request_id, "request": {"url": url}}},
+        {"method": "Network.responseReceived",
+         "params": {"requestId": request_id, "response": {"url": url, "status": 200}}},
+        {"method": "Network.loadingFinished",
+         "params": {"requestId": request_id}},
+    ]
+
+
+class FakeCaptureCDP:
+    """支持 Network 事件被动捕获的最小 CDP stub。
+
+    - events: 事件缓冲（与真实 CDPSession 同名同义）
+    - pending: 每次 drain_events 交付一批预置事件（模拟页面自身发请求）
+    - sent: 已发送命令 (method, params) 记录；sent_methods 为方法名视图
+    - send: getResponseBody 按 requestId 返回预置 body
+    """
+
+    def __init__(self, pending_batches=None, responses=None):
+        self.events = []
+        self.pending = list(pending_batches or [])
+        self.responses = dict(responses or {})
+        self.sent = []
+
+    @property
+    def sent_methods(self):
+        return [method for method, _ in self.sent]
+
+    def send(self, method, params=None, sid=None):
+        self.sent.append((method, params or {}))
+        if method == "Network.getResponseBody":
+            request_id = params["requestId"]
+            return {"result": {"body": self.responses[request_id], "base64Encoded": False}}
+        if method == "Target.createTarget":
+            return {"result": {"targetId": "fake-target"}}
+        if method == "Target.attachToTarget":
+            return {"result": {"sessionId": "fake-session"}}
+        return {"result": {}}
+
+    def drain_events(self, duration):
+        if self.pending:
+            self.events.extend(self.pending.pop(0))
+
+    def eval_js(self, js, sid):
+        self.sent.append(("Runtime.evaluate", {"expression": js}))
+        return None
+
+    def close(self):
+        pass
 
 
 def chrome_cmdline(cdp_port, user_data_dir):

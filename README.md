@@ -228,8 +228,8 @@ boss-zhipin-scraper/
 这是一个基于 Chrome CDP 的 BOSS直聘爬虫，核心流程：
 
 1. 通过 Chrome DevTools Protocol (CDP) 连接到已打开的 Chrome
-2. 在 BOSS直聘页面内注入 JS，用同步 XHR 调用搜索 API
-3. API 返回明文 `salaryDesc`，绕过前端字体反爬
+2. 导航到真实搜索页，通过 CDP `Network` 域**被动捕获页面自身发出的搜索 API 响应**（不发任何注入请求，规避 BOSS 对注入 XHR 的风控识别）
+3. 翻页通过滚动触发页面自身的无限滚动加载，继续旁听其请求；API 返回明文 `salaryDesc`，绕过前端字体反爬
 4. 列表 API 保留 `securityId` / `lid` 等上下文，进入详情页时带上这些参数
 5. 每页抓完立即写入文件，按 `job_id` 去重
 
