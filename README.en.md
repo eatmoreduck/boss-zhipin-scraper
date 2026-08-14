@@ -227,8 +227,8 @@ boss-zhipin-scraper/
 This is a Chrome-CDP-based BOSS Zhipin crawler. Core flow:
 
 1. Connect to an already-open Chrome via the Chrome DevTools Protocol (CDP)
-2. Inject JS inside the BOSS Zhipin page that calls the search API via synchronous XHR
-3. The API returns plaintext `salaryDesc`, bypassing the front-end font obfuscation
+2. Navigate to the real search page and **passively capture the page's own search-API responses** via the CDP `Network` domain (no injected requests, avoiding BOSS risk-control flags on injected XHRs)
+3. Pagination scrolls the page to trigger its own infinite-scroll loading and keeps listening; the API returns plaintext `salaryDesc`, bypassing the front-end font obfuscation
 4. The list API preserves `securityId` / `lid` context, carried into the detail page
 5. Each page is written to disk immediately, deduped by `job_id`
 

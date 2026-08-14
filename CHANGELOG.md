@@ -2,6 +2,12 @@
 
 ## 未发布
 
+### 变更
+- 列表抓取与登录探测全面改为**被动捕获**（#53/#30）：不再向页面注入同步 XHR（该请求模式会被 BOSS 风控识别为 code 37），改为导航真实搜索页后通过 CDP `Network` 域旁听页面自身发出的 `joblist.json` 响应；翻页改为滚动触发页面自身的无限滚动加载（每页 15 条，`hasMore=false` 时提前结束）。字段映射逻辑从注入 JS 模板迁至 Python（`map_api_job`）
+- 登录/风控判定并入首次真实搜索响应（`LoginGateError`）：正式抓取不再预先发送固定 `Java/上海` 登录探测，消除一次无关请求；`--check`、`--setup-chrome` 的探测同样改为被动捕获，消息与退出语义不变
+- 后台标签页开启 `Emulation.setFocusEmulationEnabled` 焦点仿真：页面自身的无限滚动加载在真实后台（不可见、无焦点）状态下不触发，仿真后 `document.hidden=false / visibilityState=visible / hasFocus=true`，且不激活窗口、不抢前台焦点
+- 删除死代码：`FETCH_API_JS_TEMPLATE`、`build_login_probe_url`、`parse_api_jobs_eval_value`、`should_use_dom_fallback`；`CDPSession` 新增事件缓冲与 `drain_events`；测试从 92 增至 96 个
+
 ### 新增
 - 详情/列表结果新增独立字段 `boss_active_status`（如「今日活跃」「在线」）：列表兼容 `activeTimeDesc` 与 `bossOnline`（仅在线时映射为「在线」）；详情页从招聘者卡片解析更细粒度状态并优先保留；JD 正文仍剔除该行，不混入描述
 - 新增 `--stop-chrome` 命令：抓取/分析完成后关闭 BOSS 专用 CDP Chrome（按 user-data-dir 精准匹配隔离 profile，不碰主 Chrome）；抓取命令新增 `--close-chrome` 选项，正常结束后自动收尾（默认关闭，异常退出不触发以保留登录态）。复用已有 `stop_cdp_chrome` 的安全匹配逻辑，补齐进程关闭/收尾链路的单元测试。（#26）
