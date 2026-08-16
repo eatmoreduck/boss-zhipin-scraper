@@ -53,6 +53,7 @@ requests = None
 
 # CDP 默认端口（可通过 --cdp-port 覆盖）
 DEFAULT_CDP_PORT = 9222
+DEFAULT_HOMEPAGE_URL = "https://www.zhipin.com/chengdu/?ka=header-home"
 
 # API 基础路径（便于统一修改）
 API_JOB_LIST_PATH = "/wapi/zpgeek/search/joblist.json"
@@ -291,6 +292,7 @@ class CDPSession:
         ws_url = resp.json()["webSocketDebuggerUrl"]
         self.ws = websocket.create_connection(ws_url, timeout=60)
         self.mid = 0
+        self._events = []
 
     def send(self, method, params=None, sid=None, timeout=30):
         """发送 CDP 命令并等待匹配的响应。
@@ -339,13 +341,57 @@ class CDPSession:
             if r.get("id") == self.mid:
                 return r
 
-            # 不匹配的消息：可能是事件通知，记录并跳过
+            # 不匹配的消息：可能是事件通知，交给 recv_event 使用
             event_name = r.get("method", "unknown")
             log.debug(f"跳过不匹配消息 (id={r.get('id')}, event={event_name})")
+            if r.get("method"):
+                self._events.append(r)
 
         raise TimeoutError(
             f"CDP send({method}) 在 {max_retries} 条消息内未找到匹配响应"
         )
+
+    def pop_event(self, method=None, sid=None):
+        """Pop the first buffered CDP event matching the optional filters."""
+        for index, event in enumerate(self._events):
+            if method and event.get("method") != method:
+                continue
+            if sid is not None and event.get("sessionId") != sid:
+                continue
+            return self._events.pop(index)
+        return None
+
+    def recv_event(self, timeout=1.0, sid=None):
+        """Receive one CDP event without losing events seen during send()."""
+        buffered = self.pop_event(sid=sid)
+        if buffered is not None:
+            return buffered
+
+        deadline = time.time() + max(0.0, timeout)
+        previous_timeout = self.ws.gettimeout() if hasattr(self.ws, "gettimeout") else None
+        try:
+            while time.time() < deadline:
+                remaining = max(0.05, deadline - time.time())
+                if hasattr(self.ws, "settimeout"):
+                    self.ws.settimeout(remaining)
+                try:
+                    raw = self.ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    return None
+                try:
+                    event = json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if not event.get("method"):
+                    continue
+                if sid is not None and event.get("sessionId") != sid:
+                    self._events.append(event)
+                    continue
+                return event
+        finally:
+            if previous_timeout is not None and hasattr(self.ws, "settimeout"):
+                self.ws.settimeout(previous_timeout)
+        return None
 
     def eval_js(self, js, sid):
         r = self.send("Runtime.evaluate", {"expression": js, "returnByValue": True}, sid)
@@ -1289,6 +1335,204 @@ def parse_api_jobs_eval_value(value):
     return jobs
 
 
+class BossAPIError(RuntimeError):
+    """BOSS returned a non-success business response."""
+
+    def __init__(self, code, message=""):
+        self.code = code
+        self.message = message
+        suffix = f": {message}" if message else ""
+        super().__init__(f"BOSS 接口返回 code {code}{suffix}")
+
+
+HOMEPAGE_JOB_KEYS = {
+    "jobName", "encryptJobId", "salaryDesc", "brandName", "cityName",
+}
+
+
+def _looks_like_homepage_job(value):
+    if not isinstance(value, dict):
+        return False
+    candidate = value.get("jobInfo") if isinstance(value.get("jobInfo"), dict) else value
+    return len(HOMEPAGE_JOB_KEYS.intersection(candidate)) >= 2
+
+
+def iter_homepage_job_lists(value, path="$"):
+    """Yield JSON paths containing native homepage job objects."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}"
+            if isinstance(child, list) and any(_looks_like_homepage_job(item) for item in child):
+                yield child_path, child
+            else:
+                yield from iter_homepage_job_lists(child, child_path)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            if isinstance(child, (dict, list)):
+                yield from iter_homepage_job_lists(child, f"{path}[{index}]")
+
+
+def classify_homepage_section(response_url, json_path):
+    """Classify native homepage responses without relying on rendered labels."""
+    parsed_url = urlparse(response_url)
+    query = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
+    if query.get("sortType") == "1":
+        return "selected"
+    if query.get("sortType") == "2":
+        return "latest"
+    hint = f"{parsed_url.path} {parsed_url.query} {json_path}".lower()
+    if any(token in hint for token in ("latest", "newest", "recent", "fresh", "newjob")):
+        return "latest"
+    if any(token in hint for token in ("recommend", "selected", "choice", "guess", "expect")):
+        return "selected"
+    return "other"
+
+
+def _homepage_public_job(raw):
+    """Normalize one homepage item while dropping session/detail context."""
+    if not isinstance(raw, dict):
+        return None
+    job = raw.get("jobInfo") if isinstance(raw.get("jobInfo"), dict) else raw
+    title = str(job.get("jobName") or "")
+    encrypt_job_id = str(job.get("encryptJobId") or "")
+    if not title and not encrypt_job_id:
+        return None
+
+    salary = str(job.get("salaryDesc") or "")
+    job_id = encrypt_job_id
+    return {
+        "title": title,
+        "salary": salary,
+        "salary_source": "api" if salary else "api_empty",
+        "location": "·".join(filter(None, [
+            str(job.get("cityName") or ""),
+            str(job.get("areaDistrict") or ""),
+            str(job.get("businessDistrict") or ""),
+        ])),
+        "tags": " | ".join(
+            value for value in [
+                str(job.get("jobExperience") or ""),
+                str(job.get("jobDegree") or ""),
+            ] if value and value != "不限"
+        ),
+        "boss_name": str(job.get("brandName") or ""),
+        "boss_title": str(job.get("bossTitle") or ""),
+        "boss_active_status": str(
+            job.get("activeTimeDesc") or ("在线" if job.get("bossOnline") else "")
+        ),
+        "company_scale": str(job.get("brandScaleName") or ""),
+        "company_stage": str(job.get("brandStageName") or ""),
+        "company_industry": str(job.get("brandIndustry") or ""),
+        "job_labels": " | ".join(str(value) for value in (job.get("jobLabels") or [])
+                                  if value not in (None, ""))
+        if isinstance(job.get("jobLabels"), list) else str(job.get("jobLabels") or ""),
+        "skills": " | ".join(str(value) for value in (job.get("skills") or [])
+                              if value not in (None, ""))
+        if isinstance(job.get("skills"), list) else str(job.get("skills") or ""),
+        # Homepage responses do not carry detail-page context into output.
+        "security_id": "",
+        "lid": "",
+        "encrypt_job_id": job_id,
+        "job_link": (
+            f"https://www.zhipin.com/job_detail/{job_id}.html" if job_id else ""
+        ),
+        "welfare": " | ".join(str(value) for value in (job.get("welfareList") or [])
+                                if value not in (None, ""))
+        if isinstance(job.get("welfareList"), list) else str(job.get("welfareList") or ""),
+    }
+
+
+def normalize_homepage_payload(data, response_url=""):
+    """Extract public jobs and safe provenance from one homepage response."""
+    if not isinstance(data, dict):
+        return [], []
+    raw_code = data.get("code")
+    try:
+        code = int(raw_code) if raw_code is not None else 0
+    except (TypeError, ValueError):
+        code = -1
+    if code != 0:
+        message = str(data.get("message") or data.get("msg") or "")
+        raise BossAPIError(code, message)
+
+    response_path = urlparse(response_url).path
+    jobs = []
+    sources = []
+    for json_path, raw_jobs in iter_homepage_job_lists(data):
+        section = classify_homepage_section(response_url, json_path)
+        count_before = len(jobs)
+        for raw in raw_jobs:
+            normalized = _homepage_public_job(raw)
+            if normalized:
+                normalized["homepage_section"] = section
+                normalized["homepage_source_path"] = json_path
+                normalized["homepage_response_path"] = response_path
+                jobs.append(normalized)
+        sources.append({
+            "response_path": response_path,
+            "json_path": json_path,
+            "section": section,
+            "job_count": len(jobs) - count_before,
+        })
+    return jobs, sources
+
+
+def wait_for_homepage_job_responses(cdp, sid, timeout=15):
+    """Capture native JSON responses emitted by the homepage."""
+    pending = {}
+    all_jobs = []
+    sources = []
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        event = cdp.recv_event(timeout=min(1.0, max(0.05, deadline - time.time())), sid=sid)
+        if event is None:
+            continue
+        method = event.get("method")
+        params = event.get("params") or {}
+        if method == "Network.responseReceived":
+            response = params.get("response") or {}
+            parsed_url = urlparse(response.get("url") or "")
+            mime_type = str(response.get("mimeType") or "").lower()
+            if parsed_url.netloc in {"www.zhipin.com", "zhipin.com"} and (
+                "json" in mime_type or "/wapi/" in parsed_url.path
+            ):
+                pending[params.get("requestId")] = response
+        elif method == "Network.loadingFinished":
+            request_id = params.get("requestId")
+            response = pending.pop(request_id, None)
+            if response is None:
+                continue
+            try:
+                body_result = cdp.send(
+                    "Network.getResponseBody", {"requestId": request_id}, sid, timeout=10,
+                )
+            except (KeyError, TimeoutError):
+                continue
+            result = body_result.get("result") or {}
+            body = result.get("body") or ""
+            if result.get("base64Encoded"):
+                import base64
+                body = base64.b64decode(body).decode("utf-8", errors="replace")
+            try:
+                data = json.loads(body)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            response_url = response.get("url") or ""
+            response_path = urlparse(response_url).path
+            has_job_list = any(True for _ in iter_homepage_job_lists(data))
+            if not has_job_list and "/recommend/job/list.json" not in response_path:
+                continue
+            jobs, response_sources = normalize_homepage_payload(data, response_url)
+            all_jobs.extend(jobs)
+            sources.extend(response_sources)
+            captured_sections = {
+                source.get("section") for source in sources if source.get("job_count", 0) > 0
+            }
+            if {"selected", "latest"}.issubset(captured_sections):
+                break
+    return all_jobs, sources
+
+
 def build_detail_url(job):
     """Build the URL used for detail navigation without mutating job_link."""
     link = job.get("job_link", "")
@@ -1541,6 +1785,108 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
         print("无数据")
 
     return {"keyword": keyword, "city": city_name, "total": len(all_jobs), "jobs": all_jobs}
+
+
+def scrape_homepage(homepage_url, output_path=None, cdp_port=DEFAULT_CDP_PORT,
+                    capture_seconds=15):
+    """Capture public jobs from the homepage's native JSON responses."""
+    parsed = urlparse(homepage_url)
+    if parsed.scheme != "https" or parsed.netloc not in {"www.zhipin.com", "zhipin.com"}:
+        raise ValueError("--homepage-url 必须是 https://www.zhipin.com/ 下的地址")
+    if capture_seconds < 1:
+        raise ValueError("--capture-seconds 必须大于 0")
+
+    cdp = CDPSession(cdp_port)
+    if output_path is None:
+        output_path = default_output_path("homepage")
+    stream_mode = output_path == "-"
+
+    print("=== BOSS直聘首页岗位 ===")
+    print(f"首页路径: {parsed.path or '/'}")
+    print(f"捕获窗口: {capture_seconds} 秒\n")
+
+    tid, sid = create_page_session(cdp)
+    cdp.send("Network.enable", {}, sid)
+    try:
+        incr_request()
+        cdp.send("Page.navigate", {"url": homepage_url}, sid)
+        raw_jobs, sources = wait_for_homepage_job_responses(
+            cdp, sid, timeout=capture_seconds,
+        )
+    finally:
+        try:
+            cdp.send("Target.closeTarget", {"targetId": tid})
+        except (KeyError, TimeoutError, OSError):
+            log.debug("关闭首页 target 失败", exc_info=True)
+        try:
+            cdp.close()
+        except OSError:
+            log.debug("关闭首页 CDP 连接失败", exc_info=True)
+
+    deduped = []
+    by_key = {}
+    for job in raw_jobs:
+        key = job.get("encrypt_job_id") or job.get("job_link") or (
+            f"{job.get('boss_name', '')}|{job.get('title', '')}|{job.get('location', '')}"
+        )
+        key = str(key)
+        if not key.strip("|"):
+            continue
+        section = job.pop("homepage_section", "other")
+        source_path = job.pop("homepage_source_path", "")
+        response_path = job.pop("homepage_response_path", "")
+        source = {
+            "section": section,
+            "json_path": source_path,
+            "response_path": response_path,
+        }
+        if key in by_key:
+            existing = by_key[key]
+            if section not in existing["homepage_sections"]:
+                existing["homepage_sections"].append(section)
+            if source not in existing["homepage_sources"]:
+                existing["homepage_sources"].append(source)
+            continue
+        job["homepage_sections"] = [section]
+        job["homepage_sources"] = [source]
+        job["job_id"] = hashlib.md5(key.encode()).hexdigest()[:16]
+        by_key[key] = job
+        deduped.append(job)
+
+    sections = {"selected": [], "latest": [], "other": []}
+    for job in deduped:
+        for section in job.get("homepage_sections", ["other"]):
+            sections.setdefault(section, []).append(job)
+
+    result = {
+        "mode": "homepage",
+        "homepage_path": parsed.path or "/",
+        "scraped_at": datetime.now().isoformat(),
+        "total": len(deduped),
+        "section_counts": {key: len(value) for key, value in sections.items()},
+        "sections": sections,
+        "sources": sources,
+        "jobs": deduped,
+    }
+
+    for section_name in ("selected", "latest", "other"):
+        section_jobs = sections.get(section_name) or []
+        if not section_jobs:
+            continue
+        print(f"--- {section_name}: {len(section_jobs)} 条 ---")
+        for job in section_jobs:
+            print(
+                f"  ✓ {job.get('title', '')} | {job.get('salary', '')} | "
+                f"{job.get('location', '')} | {job.get('boss_name', '')}"
+            )
+
+    print(f"\n完成: {len(deduped)} 条；原生岗位列表来源 {len(sources)} 个")
+    if output_path and not stream_mode:
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        print(f"已保存: {output_path}")
+    return result
 
 
 # ============================================================
@@ -2360,6 +2706,9 @@ def main():
   # 导出 CSV
   %(prog)s --keyword "Java 风控" --pages 3 --format csv
 
+  # 读取首页精选岗位与最新职位的原生响应
+  %(prog)s --mode homepage --homepage-url "https://www.zhipin.com/chengdu/?ka=header-home"
+
   # 合并旧数据
   %(prog)s --keyword "Java 风控" --pages 3 --merge old_data.json
 
@@ -2378,6 +2727,10 @@ def main():
     p.add_argument("--pages", type=int, default=3, help=f"抓取页数 (最大 {MAX_PAGES})")
     p.add_argument("--output", default=None, help="列表数据输出路径")
     p.add_argument("--detail-output", default=None, help="详情数据输出路径")
+    p.add_argument("--homepage-url", default=DEFAULT_HOMEPAGE_URL,
+                   help=f"homepage 模式目标地址（默认 {DEFAULT_HOMEPAGE_URL}）")
+    p.add_argument("--capture-seconds", type=int, default=15,
+                   help="homepage 模式捕获原生响应的秒数（5-30，默认 15）")
     p.add_argument("--cdp-port", type=int, default=DEFAULT_CDP_PORT,
                    help=f"CDP 调试端口 (默认 {DEFAULT_CDP_PORT})")
     p.add_argument("--format", default="json", choices=["json", "csv"],
@@ -2401,6 +2754,10 @@ def main():
     p.add_argument("--input", default=None, help="从已有 JSON 文件读取（跳过抓取）")
     p.add_argument("--allow-dom-fallback", action="store_true",
                    help="API 无数据时允许降级 DOM 提取（薪资可能受字体反爬影响，默认关闭）")
+    p.add_argument("--mode", choices=["search", "homepage"], default="search",
+                   help="功能模式：search=多条件检索；homepage=首页精选/最新职位")
+    p.add_argument("--stdout", action="store_true",
+                   help="homepage 模式将结果 JSON 输出到 stdout（日志走 stderr）")
 
     # 工具命令
     p.add_argument("--check", action="store_true", help="运行环境诊断检查")
@@ -2426,6 +2783,11 @@ def main():
                    help="抓取正常结束后自动关闭专用 Chrome（默认不关；异常退出不触发，保留登录态）")
 
     args = p.parse_args()
+    if args.stdout and args.mode != "homepage":
+        p.error("--stdout 目前仅支持 --mode homepage")
+    real_stdout = sys.stdout
+    if args.stdout:
+        sys.stdout = sys.stderr
 
     # --check 模式
     if args.check:
@@ -2455,6 +2817,24 @@ def main():
 
     if not require_runtime_dependencies("requests", "websocket"):
         sys.exit(1)
+
+    if args.mode == "homepage":
+        args.capture_seconds = max(5, min(30, args.capture_seconds))
+        try:
+            homepage_data = scrape_homepage(
+                args.homepage_url,
+                "-" if args.stdout else args.output,
+                cdp_port=args.cdp_port,
+                capture_seconds=args.capture_seconds,
+            )
+        except (BossAPIError, TimeoutError, RuntimeError, ValueError) as exc:
+            print(f"❌ 首页岗位抓取失败: {exc}")
+            sys.exit(2)
+        if args.stdout:
+            json.dump(homepage_data, real_stdout, ensure_ascii=False, indent=2)
+            real_stdout.write("\n")
+            real_stdout.flush()
+        sys.exit(0)
 
     # 抓取前校验城市，避免无效中文名被原样作为 city 参数继续请求。
     if not args.input:
