@@ -112,6 +112,12 @@ hermes skills install https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-
 
 > 注意：此方式依赖 hermes 进程能直接访问 GitHub，如果遇到超时或连接失败，请使用方式 1 或 2。
 
+### Codex / Agent Skills
+
+仓库同时提供符合 Agent Skills 标准的 Codex 入口：`.agents/skills/boss-zhipin-scraper/SKILL.md`。从仓库根目录打开项目时，Codex 可以发现该 Skill 并按其中的低频抓取、安全边界和用户确认规则调用已有 CLI；它不包含岗位结果、浏览器 profile、Cookie、简历或其他本地个人数据。
+
+Codex Skill 仍然使用仓库已有的 `scripts/boss_cdp_raw.py` 和 `scripts/job_summary.py`，不会替代或改变上面的 Hermes 安装方式。
+
 ### 验证安装
 
 ```bash

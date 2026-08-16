@@ -1,0 +1,4 @@
+interface:
+  display_name: "BOSS直聘 Job Search"
+  short_description: "Search BOSS直聘 jobs with the repository CLI"
+  default_prompt: "Use $boss-zhipin-scraper to search a small set of BOSS直聘 jobs and summarize the results safely."
