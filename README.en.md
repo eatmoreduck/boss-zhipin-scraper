@@ -1,13 +1,13 @@
-# BOSS Zhipin Scraper · Job Crawler v2.2 (Chrome CDP / Plaintext Salary)
+# BOSS Zhipin Scraper · Job Crawler v2.2 (Chrome/Edge CDP / Plaintext Salary)
 
 > 🌐 中文文档：[README.md](./README.md)
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)
 ![Version](https://img.shields.io/badge/version-2.2.0-orange.svg)
 
-A lightweight **BOSS Zhipin scraper / crawler** (a.k.a. spider) for job listings on [zhipin.com](https://www.zhipin.com). Instead of driving a heavy Selenium/Playwright browser, it connects to your **already-logged-in Chrome** via the Chrome DevTools Protocol (CDP), reuses the real session, and calls the in-page search API directly — bypassing the front-end font-based anti-scraping so you get the **plaintext salary** in every record. Output goes to JSON / CSV, plus an aggregated salary/skill analysis and a copy-paste prompt for polishing your job-application materials. Also ships as a Hermes Agent Skill.
+A lightweight **BOSS Zhipin scraper / crawler** (a.k.a. spider) for job listings on [zhipin.com](https://www.zhipin.com). Instead of driving a heavy Selenium/Playwright browser, it connects to your **already-logged-in Chrome or Microsoft Edge** via the Chrome DevTools Protocol (CDP), reuses the real session, and calls the in-page search API directly — bypassing the front-end font-based anti-scraping so you get the **plaintext salary** in every record. Output goes to JSON / CSV, plus an aggregated salary/skill analysis and a copy-paste prompt for polishing your job-application materials. Also ships as a Hermes Agent Skill.
 
 > 📌 **In one sentence**: no Selenium/Playwright — connect to your logged-in Chrome over CDP, hit the search API with the real session, get JSON/CSV with plaintext salaries, plus salary-distribution, skill-frequency stats and a résumé-optimization prompt.
 
@@ -29,6 +29,8 @@ pip install -r requirements.txt          # or: uv sync
 
 # 2. Launch an isolated Chrome and log in (only once; session persists)
 python3 scripts/boss_cdp_raw.py --setup-chrome
+# Or explicitly use Microsoft Edge:
+# python3 scripts/boss_cdp_raw.py --setup-edge
 
 # 3. Scrape + analyze
 python3 scripts/boss_cdp_raw.py --keyword "AI Agent" --city 上海 --pages 3 --analysis
@@ -54,7 +56,7 @@ Right after scraping you get: salary ranges, experience requirements, top skill 
 - Incremental writes (no data loss on crash)
 - One-shot environment check + persistent isolated Chrome CDP profile
 - Multi-dimension filters (scale, funding, salary, experience, degree, industry)
-- macOS + Linux support (a Windows code path is reserved but untested — not guaranteed to work)
+- macOS + Linux + Windows support; Windows supports Chrome or Microsoft Edge CDP
 
 <details>
 <summary>🔍 Why not a Selenium / Playwright crawler?</summary>
@@ -132,7 +134,7 @@ git clone https://github.com/eatmoreduck/boss-zhipin-scraper.git
 cd boss-zhipin-scraper
 pip install -r requirements.txt
 
-# 2. Start Chrome CDP
+# 2. Start Chrome CDP (or use --setup-edge)
 python3 scripts/boss_cdp_raw.py --setup-chrome
 # First run won't copy your main Chrome session; log in to zhipin.com in the dedicated BOSS browser that pops up
 # setup waits for login to finish and confirms the API returns plaintext salaries
@@ -167,11 +169,14 @@ python3 scripts/job_summary.py --top 15
 | `--check` | Environment check (CDP + deps + login state) |
 | `--smoke-test` | Run one real Chrome/CDP BOSS search API smoke test, writes no result files |
 | `--setup-chrome` | One-shot launch of Chrome CDP (persistent isolated profile) |
+| `--setup-edge` | One-shot launch of Microsoft Edge CDP (persistent isolated profile) |
+| `--browser` | Select `chrome` or `edge` for `--setup-chrome`; defaults to `chrome` for compatibility |
 | `--copy-login-state` | Manually import the main Chrome's Local State + cookie-related files into the isolated profile (never copied by default, on first run, or on repeated runs) |
 | `--reset-chrome-profile` | Rebuild the dedicated BOSS Chrome profile; clears the login state inside this dedicated browser |
 | `--no-wait-login` | With `--setup-chrome`, do not wait for login to finish |
 | `--login-timeout` | Seconds to wait for login under `--setup-chrome` (default 300) |
 | `--stop-chrome` | Close the dedicated BOSS CDP Chrome (matched precisely by the isolated profile; never touches your main Chrome) |
+| `--stop-edge` | Close the dedicated browser CDP process (shares the isolated profile with `--stop-chrome`) |
 | `--close-chrome` | Auto-close the dedicated Chrome after a scrape finishes normally (off by default; not triggered on errors, so the login state is kept) |
 | `--output` | List output path (default `~/.boss-zhipin-scraper/job-result/`) |
 | `--detail-output` | Detail output path (default `~/.boss-zhipin-scraper/job-result/`) |
@@ -238,7 +243,7 @@ For detail pages, the scraper only extracts a section containing the job-descrip
 
 `--input ... --analysis --no-detail` first loads `--detail-output`, then the `boss_details_*.json` with the same timestamp in the same dir as the input list, and finally the newest detail file under `~/.boss-zhipin-scraper/job-result`.
 
-## Chrome Profile Security Policy
+## Browser Profile Security Policy
 
 `--setup-chrome` uses a persistent isolated profile by default — it neither symlinks nor copies your main Chrome data. First launch and subsequent launches only create or reuse this dedicated profile:
 
@@ -248,7 +253,7 @@ Without an explicit `--output` or `--detail-output`, scraping results are saved 
 
 - `~/.boss-zhipin-scraper/job-result`
 
-On first use you must log in to BOSS Zhipin manually inside this dedicated Chrome. `--setup-chrome` waits for the login to finish and uses the search API to confirm it can get plaintext `salaryDesc` before returning. The session is stored inside the dedicated profile and survives reboots; re-running `--setup-chrome` does not wipe it and does not affect your main Chrome, Gmail, GitHub, or other accounts.
+On first use you must log in to BOSS Zhipin manually inside this dedicated browser. `--setup-chrome` and `--setup-edge` wait for login to finish and confirm that the API returns plaintext `salaryDesc`. The session is stored inside the dedicated profile and survives reboots; re-running either setup command does not wipe it and does not affect your main Chrome, Edge, Gmail, GitHub, or other accounts.
 
 Each login-probe round sends one search request, rotates across keyword/city targets, and backs off from 3 seconds to at most 15 seconds. Probe requests count toward the same 500-request global budget. Logged-out sessions, empty probe samples, API restrictions, and malformed responses are reported separately. A confirmed restriction such as `code: 31` or `code: 37` ("您的环境存在异常" / abnormal environment) stops probing immediately instead of prompting for another login or continuing frequent retries. Unknown risk-control codes are also recognized as restrictions via message keywords (abnormal environment, too-frequent access, security check, etc.), so an authenticated session that is merely rate-limited is no longer misreported as a login failure.
 
@@ -274,7 +279,7 @@ After a scrape/analysis finishes, the dedicated Chrome is **not** closed automat
 python3 scripts/boss_cdp_raw.py --stop-chrome
 ```
 
-`--stop-chrome` only closes the Chrome process(es) that belong to the scraper's isolated profile (`--user-data-dir`). It **never** kills by port or process name, so it cannot accidentally take down your main Chrome, Gmail, GitHub, or other signed-in sessions.
+`--stop-chrome`/`--stop-edge` only close Chrome or Edge process(es) that belong to the scraper's isolated profile (`--user-data-dir`). They **never** kill by port or process name, so they cannot accidentally take down your main Chrome, Edge, Gmail, GitHub, or other signed-in sessions.
 
 If you'd rather have a particular scrape close the dedicated Chrome once it finishes normally, add `--close-chrome`:
 

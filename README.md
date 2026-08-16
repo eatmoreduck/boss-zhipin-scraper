@@ -1,13 +1,13 @@
-# BOSS直聘爬虫 · 职位抓取工具 v2.2（Chrome CDP / 明文薪资）
+# BOSS直聘爬虫 · 职位抓取工具 v2.2（Chrome/Edge CDP / 明文薪资）
 
 > 🌐 English documentation: [README.en.md](./README.en.md)
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)
 ![Version](https://img.shields.io/badge/version-2.2.0-orange.svg)
 
-一个轻量的 **BOSS直聘爬虫（spider / crawler / scraper）**：通过 Chrome DevTools Protocol 连接本地已登录的 Chrome，复用真实登录态调用 zhipin.com 搜索 API，绕过前端字体反爬，输出含**明文薪资**的职位数据（JSON / CSV），并生成薪资分布、技能词频和求职材料优化提示词。同时作为 Hermes Agent Skill 提供。
+一个轻量的 **BOSS直聘爬虫（spider / crawler / scraper）**：通过 Chrome DevTools Protocol 连接本地已登录的 Chrome 或 Microsoft Edge，复用真实登录态调用 zhipin.com 搜索 API，绕过前端字体反爬，输出含**明文薪资**的职位数据（JSON / CSV），并生成薪资分布、技能词频和求职材料优化提示词。同时作为 Hermes Agent Skill 提供。
 
 > 📌 **一句话介绍**：不用 Selenium/Playwright，直接通过 Chrome DevTools Protocol 连接本地已登录的 Chrome，复用真实登录态调搜索 API，输出含明文薪资的 JSON/CSV，并生成薪资分布、技能词频和求职材料优化提示词。
 
@@ -31,6 +31,8 @@ pip install -r requirements.txt          # 或 uv sync
 
 # 2. 启动隔离 Chrome 并登录（只需一次，登录态持久保存）
 python3 scripts/boss_cdp_raw.py --setup-chrome
+# 也可以显式使用 Microsoft Edge：
+# python3 scripts/boss_cdp_raw.py --setup-edge
 
 # 3. 抓取 + 分析
 python3 scripts/boss_cdp_raw.py --keyword "AI Agent" --city 上海 --pages 3 --analysis
@@ -56,7 +58,7 @@ python3 scripts/job_summary.py
 - 增量写入（异常退出不丢数据）
 - 一键环境检查 + 持久隔离 Chrome CDP profile
 - 多维筛选（规模、融资、薪资、经验、学历、行业）
-- macOS + Linux 支持（Windows 代码分支已预留，未经实测，不保证可用）
+- macOS + Linux + Windows 支持；Windows 可使用 Chrome 或 Microsoft Edge CDP
 
 <details>
 <summary>🔍 为什么不选 Selenium / Playwright 类爬虫？</summary>
@@ -134,9 +136,10 @@ git clone https://github.com/eatmoreduck/boss-zhipin-scraper.git
 cd boss-zhipin-scraper
 pip install -r requirements.txt
 
-# 2. 启动 Chrome CDP
+# 2. 启动 Chrome CDP（也可改用 --setup-edge）
 python3 scripts/boss_cdp_raw.py --setup-chrome
 # 首次使用也不会复制主 Chrome 登录态；请在弹出的 BOSS 专用浏览器中登录 zhipin.com
+# setup 会等待登录完成，并确认接口能返回明文薪资
 # setup 会等待登录完成，并确认接口能返回明文薪资
 
 # 3. 检查环境
@@ -169,11 +172,14 @@ python3 scripts/job_summary.py --top 15
 | `--check` | 环境检查（CDP + 依赖 + 登录态） |
 | `--smoke-test` | 用真实 Chrome/CDP 跑一次 BOSS 搜索 API smoke test，不写结果文件 |
 | `--setup-chrome` | 一键启动 Chrome CDP（持久隔离 profile） |
+| `--setup-edge` | 一键启动 Microsoft Edge CDP（持久隔离 profile） |
+| `--browser` | 配合 `--setup-chrome` 选择 `chrome` 或 `edge`；默认 `chrome`，保留原命令兼容性 |
 | `--copy-login-state` | 手动导入主 Chrome 的 Local State + Cookie 相关文件到隔离 profile（默认、首次启动、重复启动都不复制） |
 | `--reset-chrome-profile` | 重建 BOSS 专用 Chrome profile，会清除此专用浏览器内的登录态 |
 | `--no-wait-login` | `--setup-chrome` 启动后不等待登录完成 |
 | `--login-timeout` | `--setup-chrome` 等待登录完成的秒数（默认 300） |
 | `--stop-chrome` | 关闭 BOSS 专用 CDP Chrome（按隔离 profile 精准匹配，不碰主 Chrome） |
+| `--stop-edge` | 关闭 BOSS 专用浏览器 CDP（与 `--stop-chrome` 共用隔离 profile） |
 | `--close-chrome` | 抓取正常结束后自动关闭专用 Chrome（默认不关；异常退出不触发，保留登录态） |
 | `--output` | 列表输出路径（默认 `~/.boss-zhipin-scraper/job-result/`） |
 | `--detail-output` | 详情输出路径（默认 `~/.boss-zhipin-scraper/job-result/`） |
@@ -239,7 +245,7 @@ boss-zhipin-scraper/
 
 `--input ... --analysis --no-detail` 会优先加载 `--detail-output`，其次加载与输入列表同目录、同时间戳的 `boss_details_*.json`，最后查找 `~/.boss-zhipin-scraper/job-result` 下最新详情文件。
 
-## Chrome profile 安全策略
+## 浏览器 profile 安全策略
 
 `--setup-chrome` 默认使用持久隔离 profile，不软链接、不复制你的主 Chrome 数据。首次启动和后续重复启动都只是创建或复用这个专用 profile：
 
@@ -249,7 +255,7 @@ boss-zhipin-scraper/
 
 - `~/.boss-zhipin-scraper/job-result`
 
-首次使用需要在这个专用 Chrome 中手动登录 BOSS直聘。`--setup-chrome` 会等待登录完成，并用搜索接口确认能拿到明文 `salaryDesc` 后再返回。登录态保存在专用 profile 内，重启机器后仍然保留；重复运行 `--setup-chrome` 不会清空它，也不会影响主 Chrome、Gmail、GitHub 等账号。
+首次使用需要在这个专用浏览器中手动登录 BOSS直聘。`--setup-chrome` 和 `--setup-edge` 都会等待登录完成并确认接口能返回明文 `salaryDesc`；登录态保存在专用 profile 内，重启机器后仍然保留，也不会影响主 Chrome、Edge、Gmail、GitHub 等账号。
 
 登录探测每轮只发送一个搜索请求，并在不同关键词/城市之间轮换，等待间隔会从 3 秒逐步退避到最多 15 秒；这些请求同样计入单次 500 次的全局请求预算。未登录、探测样本为空、接口限制和响应异常会分别提示。遇到已确认的限制状态（例如 `code: 31`、`code: 37`「您的环境存在异常」）会立即停止探测，不会继续提示重复登录或密集重试；对未知风控码还会按 message 关键字（环境存在异常、访问频繁、安全校验等）兜底识别为限制状态，避免把「已登录但被风控」误判为登录失败。
 
@@ -275,7 +281,7 @@ python3 scripts/boss_cdp_raw.py --setup-chrome --reset-chrome-profile
 python3 scripts/boss_cdp_raw.py --stop-chrome
 ```
 
-`--stop-chrome` 只关闭 scraper 隔离 profile（`--user-data-dir`）对应的 Chrome 进程，**绝不**按端口或进程名去 kill，因此不会误伤你正在用的主 Chrome、Gmail、GitHub 等账号。
+`--stop-chrome`/`--stop-edge` 只关闭 scraper 隔离 profile（`--user-data-dir`）对应的 Chrome 或 Edge 进程，**绝不**按端口或进程名去 kill，因此不会误伤你正在用的主 Chrome、Edge、Gmail、GitHub 等账号。
 
 如果你希望某次抓取正常结束后就顺手关掉 Chrome，可以加 `--close-chrome`：
 
