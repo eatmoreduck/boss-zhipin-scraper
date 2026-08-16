@@ -43,13 +43,12 @@ class ChromeSetupTests(unittest.TestCase):
         self.assertIn("boss_jobs_", module.default_output_path("jobs"))
         self.assertIn("boss_details_", module.default_output_path("details"))
 
-    def test_create_page_session_defaults_to_background_with_visibility_override(self):
+    def test_create_page_session_does_not_inject_visibility_override(self):
         module = load_module()
         cdp = mock.Mock()
         cdp.send.side_effect = [
             {"result": {"targetId": "target-1"}},
             {"result": {"sessionId": "session-1"}},
-            {"result": {}},
         ]
 
         result = module.create_page_session(cdp)
@@ -60,16 +59,11 @@ class ChromeSetupTests(unittest.TestCase):
             [
                 mock.call(
                     "Target.createTarget",
-                    {"url": "about:blank", "background": True},
+                    {"url": "about:blank", "background": False},
                 ),
                 mock.call(
                     "Target.attachToTarget",
                     {"targetId": "target-1", "flatten": True},
-                ),
-                mock.call(
-                    "Page.addScriptToEvaluateOnNewDocument",
-                    {"source": module.BACKGROUND_VISIBILITY_SCRIPT},
-                    "session-1",
                 ),
             ],
         )
@@ -460,28 +454,44 @@ class ChromeSetupTests(unittest.TestCase):
         self.assertIs(server_error.status, module.LoginProbeStatus.RESPONSE_ERROR)
         self.assertTrue(server_error.retryable)
 
-    def test_run_check_reports_restriction_instead_of_logged_out(self):
+    def test_run_check_does_not_probe_boss_login_state(self):
         module = load_module()
         response = mock.Mock()
         response.json.return_value = {"Browser": "Chrome/140"}
-        restricted = module.LoginProbeResult(
-            module.LoginProbeStatus.RESTRICTED,
-            code=31,
-            message="访问受限",
-        )
         requests_mock = mock.Mock()
         requests_mock.get.return_value = response
         stdout = io.StringIO()
         with mock.patch.object(module, "require_runtime_dependencies", return_value=True), \
                 mock.patch.object(module, "requests", requests_mock), \
-                mock.patch.object(module, "check_login_state", return_value=restricted), \
+                mock.patch.object(module, "check_login_state") as login_probe, \
                 redirect_stdout(stdout):
-            self.assertEqual(module.run_check(cdp_port=9333), 1)
+            self.assertEqual(module.run_check(cdp_port=9333), 0)
 
         output = stdout.getvalue()
-        self.assertIn("限制状态", output)
-        self.assertIn("code: 31", output)
-        self.assertNotIn("未登录 —", output)
+        self.assertIn("不会发送 BOSS 登录探测请求", output)
+        login_probe.assert_not_called()
+
+    def test_main_reports_code_37_without_traceback(self):
+        module = load_module()
+        argv = ["boss_cdp_raw.py", "--keyword", "AI", "--city", "上海"]
+        stdout = io.StringIO()
+        with mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(module, "require_runtime_dependencies", return_value=True), \
+                mock.patch.object(module, "resolve_city", return_value=("上海", "101020100")), \
+                mock.patch.object(
+                    module,
+                    "scrape_list",
+                    side_effect=module.BossAPIError(37, "您的环境存在异常"),
+                ), \
+                redirect_stdout(stdout):
+            with self.assertRaises(SystemExit) as caught:
+                module.main()
+
+        self.assertEqual(caught.exception.code, 1)
+        output = stdout.getvalue()
+        self.assertIn("code 37", output)
+        self.assertIn("已停止抓取", output)
+        self.assertNotIn("Traceback", output)
 
     def test_detail_record_preserves_job_id_and_job_link(self):
         module = load_module()
@@ -745,6 +755,94 @@ class ChromeSetupTests(unittest.TestCase):
             module.parse_api_jobs_eval_value(json.dumps([{"title": "Java", "job_link": "https://example.com"}])),
             [{"title": "Java", "job_link": "https://example.com"}],
         )
+
+    def test_normalize_native_api_response_preserves_plain_salary_and_context(self):
+        module = load_module()
+
+        jobs = module.normalize_api_jobs({
+            "code": 0,
+            "zpData": {
+                "jobList": [{
+                    "jobName": "AI 工程师",
+                    "salaryDesc": "20-35K·13薪",
+                    "cityName": "北京",
+                    "areaDistrict": "朝阳区",
+                    "businessDistrict": "望京",
+                    "jobExperience": "1-3年",
+                    "jobDegree": "本科",
+                    "brandName": "示例公司",
+                    "brandScaleName": "100-499人",
+                    "jobLabels": ["五险一金", "餐补"],
+                    "skills": ["Python", "LLM"],
+                    "encryptJobId": "job-1",
+                    "encryptBrandId": "brand-1",
+                    "securityId": "security-1",
+                    "lid": "lid-1",
+                }],
+            },
+        })
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["salary"], "20-35K·13薪")
+        self.assertEqual(jobs[0]["salary_source"], "api")
+        self.assertEqual(jobs[0]["location"], "北京·朝阳区·望京")
+        self.assertEqual(jobs[0]["job_labels"], "五险一金 | 餐补")
+        self.assertEqual(
+            jobs[0]["job_link"],
+            "https://www.zhipin.com/job_detail/job-1.html",
+        )
+        self.assertEqual(
+            module.build_detail_url(jobs[0]),
+            "https://www.zhipin.com/job_detail/job-1.html?lid=lid-1&securityId=security-1",
+        )
+
+    def test_normalize_native_api_response_stops_on_code_37(self):
+        module = load_module()
+
+        with self.assertRaises(module.BossAPIError) as caught:
+            module.normalize_api_jobs({"code": 37, "message": "您的环境存在异常"})
+
+        self.assertEqual(caught.exception.code, 37)
+        self.assertIn("code 37", str(caught.exception))
+
+    def test_wait_for_native_joblist_response_reads_page_response_without_eval(self):
+        module = load_module()
+        response_url = f"https://www.zhipin.com{module.API_JOB_LIST_PATH}?query=AI"
+        cdp = mock.Mock()
+        cdp.recv_event.side_effect = [
+            {
+                "method": "Network.responseReceived",
+                "sessionId": "sid",
+                "params": {
+                    "requestId": "request-1",
+                    "response": {"url": response_url},
+                },
+            },
+            {
+                "method": "Network.loadingFinished",
+                "sessionId": "sid",
+                "params": {"requestId": "request-1"},
+            },
+        ]
+        cdp.send.return_value = {
+            "result": {
+                "body": json.dumps({
+                    "code": 0,
+                    "zpData": {"jobList": [{"jobName": "AI", "salaryDesc": "15-25K"}]},
+                }),
+            },
+        }
+
+        jobs = module.wait_for_native_joblist_response(cdp, "sid", timeout=1)
+
+        self.assertEqual(jobs[0]["title"], "AI")
+        cdp.send.assert_called_once_with(
+            "Network.getResponseBody",
+            {"requestId": "request-1"},
+            "sid",
+            timeout=10,
+        )
+        cdp.eval_js.assert_not_called()
 
     def test_login_probe_uses_one_budgeted_request(self):
         module = load_module()
@@ -1081,8 +1179,7 @@ class ChromeSetupTests(unittest.TestCase):
                     mock.patch.object(module.shutil, "copy2", side_effect=lambda src, dst: calls["copy2"].append((src, dst))), \
                     mock.patch.object(module.subprocess, "run", side_effect=lambda *args, **kwargs: fake_run(calls, *args, **kwargs)), \
                     mock.patch.object(module.subprocess, "Popen", side_effect=lambda cmd, **kwargs: calls["popen"].append(cmd)), \
-                    mock.patch.object(module.time, "sleep", return_value=None), \
-                    mock.patch.object(module, "wait_for_login", return_value=True) as wait_login:
+                    mock.patch.object(module.time, "sleep", return_value=None):
                 fake_requests.get.side_effect = fake_get
                 self.assertEqual(module.run_setup_chrome(cdp_port=9333), 0)
 
@@ -1091,7 +1188,6 @@ class ChromeSetupTests(unittest.TestCase):
         self.assertTrue(calls["popen"])
         launched = calls["popen"][0]
         self.assertIn(expected_profile_arg, launched)
-        wait_login.assert_called_once_with(9333, timeout=module.DEFAULT_LOGIN_TIMEOUT)
 
     def test_copy_login_state_is_explicit_and_does_not_copy_password_databases(self):
         module = load_module()
@@ -1144,11 +1240,11 @@ class ChromeSetupTests(unittest.TestCase):
                     mock.patch.object(module, "requests", fake_requests), \
                     mock.patch.object(module.subprocess, "run", return_value=type("Completed", (), {"stdout": ps_output, "returncode": 0})()), \
                     mock.patch.object(module.subprocess, "Popen") as popen, \
-                    mock.patch.object(module, "wait_for_login", return_value=True) as wait_login:
+                    mock.patch.object(module, "wait_for_login") as wait_login:
                 self.assertEqual(module.run_setup_chrome(cdp_port=9333), 0)
 
         popen.assert_not_called()
-        wait_login.assert_called_once_with(9333, timeout=module.DEFAULT_LOGIN_TIMEOUT)
+        wait_login.assert_not_called()
 
     def test_setup_can_skip_waiting_for_login(self):
         module = load_module()
@@ -1272,6 +1368,8 @@ class ChromeSetupTests(unittest.TestCase):
             [sys.executable, str(SCRIPT_PATH), "--help"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
 

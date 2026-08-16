@@ -47,6 +47,23 @@ from urllib.request import Request, urlopen
 websocket = None
 requests = None
 
+
+def configure_console_encoding():
+    """Keep CLI diagnostics printable on Windows consoles using legacy code pages."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not reconfigure:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            # Embedded callers and test doubles may expose a non-reconfigurable stream.
+            pass
+
+
+configure_console_encoding()
+
 # ============================================================
 # 全局常量
 # ============================================================
@@ -291,6 +308,7 @@ class CDPSession:
         ws_url = resp.json()["webSocketDebuggerUrl"]
         self.ws = websocket.create_connection(ws_url, timeout=60)
         self.mid = 0
+        self._events = []
 
     def send(self, method, params=None, sid=None, timeout=30):
         """发送 CDP 命令并等待匹配的响应。
@@ -342,10 +360,47 @@ class CDPSession:
             # 不匹配的消息：可能是事件通知，记录并跳过
             event_name = r.get("method", "unknown")
             log.debug(f"跳过不匹配消息 (id={r.get('id')}, event={event_name})")
+            if r.get("method"):
+                self._events.append(r)
 
         raise TimeoutError(
             f"CDP send({method}) 在 {max_retries} 条消息内未找到匹配响应"
         )
+
+    def pop_event(self, method=None, sid=None):
+        """Return and remove the first buffered CDP event matching filters."""
+        for index, event in enumerate(self._events):
+            if method and event.get("method") != method:
+                continue
+            if sid and event.get("sessionId") != sid:
+                continue
+            return self._events.pop(index)
+        return None
+
+    def recv_event(self, timeout=1.0, sid=None):
+        """Read one CDP event while preserving events for other consumers."""
+        event = self.pop_event(sid=sid)
+        if event is not None:
+            return event
+
+        old_timeout = self.ws.gettimeout()
+        self.ws.settimeout(max(0.05, timeout))
+        try:
+            while True:
+                try:
+                    raw = self.ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    return None
+                try:
+                    message = json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if message.get("method") and (not sid or message.get("sessionId") == sid):
+                    return message
+                if message.get("method"):
+                    self._events.append(message)
+        finally:
+            self.ws.settimeout(old_timeout)
 
     def eval_js(self, js, sid):
         r = self.send("Runtime.evaluate", {"expression": js, "returnByValue": True}, sid)
@@ -363,14 +418,8 @@ BACKGROUND_VISIBILITY_SCRIPT = (
 )
 
 
-def create_page_session(cdp, background=True):
-    """Create and attach an about:blank target without stealing focus by default.
-
-    Background pages report themselves as hidden, which prevents BOSS detail
-    pages from rendering reliably. Register the existing visibility override
-    before callers navigate. Interactive callers such as the login flow must
-    opt into a foreground target explicitly.
-    """
+def create_page_session(cdp, background=False):
+    """Create and attach a normal page target without injecting page scripts."""
     target = cdp.send(
         "Target.createTarget",
         {"url": "about:blank", "background": background},
@@ -381,12 +430,6 @@ def create_page_session(cdp, background=True):
         {"targetId": target_id, "flatten": True},
     )
     session_id = attached["result"]["sessionId"]
-    if background:
-        cdp.send(
-            "Page.addScriptToEvaluateOnNewDocument",
-            {"source": BACKGROUND_VISIBILITY_SCRIPT},
-            session_id,
-        )
     return target_id, session_id
 
 
@@ -429,6 +472,126 @@ FETCH_API_JS_TEMPLATE = """
     return JSON.stringify(results);
 })()
 """
+
+
+class BossAPIError(RuntimeError):
+    """BOSS returned a non-success business response."""
+
+    def __init__(self, code, message=""):
+        self.code = code
+        self.message = message
+        suffix = f": {message}" if message else ""
+        super().__init__(f"BOSS 搜索接口返回 code {code}{suffix}")
+
+
+def as_string_list(value):
+    """Normalize a list-or-string API field for safe display and CSV output."""
+    if isinstance(value, list):
+        return [str(item) for item in value if item not in (None, "")]
+    if value in (None, ""):
+        return []
+    return [str(value)]
+
+
+def normalize_api_jobs(data):
+    """Normalize a native BOSS joblist response without issuing another request."""
+    if not isinstance(data, dict):
+        return []
+    raw_code = data.get("code")
+    try:
+        code = int(raw_code) if raw_code is not None else 0
+    except (TypeError, ValueError):
+        code = -1
+    if code != 0:
+        message = str(data.get("message") or data.get("msg") or "")
+        raise BossAPIError(code, message)
+
+    jobs = (data.get("zpData") or {}).get("jobList") or []
+    results = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        salary = job.get("salaryDesc") or ""
+        results.append({
+            "title": job.get("jobName") or "",
+            "salary": salary,
+            "salary_source": "api" if salary else "api_empty",
+            "location": "·".join(filter(None, [
+                job.get("cityName") or "",
+                job.get("areaDistrict") or "",
+                job.get("businessDistrict") or "",
+            ])),
+            "tags": " | ".join(
+                value for value in [job.get("jobExperience") or "", job.get("jobDegree") or ""]
+                if value and value != "不限"
+            ),
+            "boss_name": job.get("brandName") or "",
+            "boss_title": job.get("bossTitle") or "",
+            "boss_active_status": job.get("activeTimeDesc") or ("在线" if job.get("bossOnline") else ""),
+            "company_scale": job.get("brandScaleName") or "",
+            "company_stage": job.get("brandStageName") or "",
+            "company_industry": job.get("brandIndustry") or "",
+            "job_labels": " | ".join(as_string_list(job.get("jobLabels"))),
+            "skills": " | ".join(as_string_list(job.get("skills"))),
+            "security_id": job.get("securityId") or "",
+            "lid": job.get("lid") or "",
+            "encrypt_job_id": job.get("encryptJobId") or "",
+            "encrypt_boss_id": job.get("encryptBossId") or "",
+            "encrypt_brand_id": job.get("encryptBrandId") or "",
+            "job_link": (
+                "https://www.zhipin.com/job_detail/" + str(job.get("encryptJobId")) + ".html"
+                if job.get("encryptJobId") else ""
+            ),
+            "company_link": (
+                "https://www.zhipin.com/gongsi/" + str(job.get("encryptBrandId")) + ".html"
+                if job.get("encryptBrandId") else ""
+            ),
+            "welfare": " | ".join(as_string_list(job.get("welfareList"))),
+        })
+    return results
+
+
+def wait_for_native_joblist_response(cdp, sid, timeout=25):
+    """Capture the page's own joblist response via CDP Network events."""
+    pending = {}
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        event = cdp.recv_event(
+            timeout=min(1.0, max(0.05, deadline - time.time())),
+            sid=sid,
+        )
+        if event is None:
+            continue
+        method = event.get("method")
+        params = event.get("params") or {}
+        if method == "Network.responseReceived":
+            response = params.get("response") or {}
+            url = response.get("url") or ""
+            if urlparse(url).path == API_JOB_LIST_PATH:
+                pending[params.get("requestId")] = response
+        elif method == "Network.loadingFinished":
+            request_id = params.get("requestId")
+            response = pending.pop(request_id, None)
+            if response is None:
+                continue
+            body_result = cdp.send(
+                "Network.getResponseBody",
+                {"requestId": request_id},
+                sid,
+                timeout=10,
+            )
+            result = body_result.get("result") or {}
+            body = result.get("body") or ""
+            if result.get("base64Encoded"):
+                import base64
+                body = base64.b64decode(body).decode("utf-8", errors="replace")
+            try:
+                data = json.loads(body)
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise RuntimeError("BOSS 原生搜索响应不是有效 JSON") from exc
+            return normalize_api_jobs(data)
+    raise TimeoutError(f"等待页面原生 {API_JOB_LIST_PATH} 响应超时")
+
 
 # ============================================================
 # DEPRECATED: DOM 提取作为 fallback（薪资可能是加密字体）
@@ -1399,6 +1562,7 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
     print()
 
     tid, sid = create_page_session(cdp)
+    cdp.send("Network.enable", {}, sid)
 
     def human_scroll(cdp, sid):
         """模拟人类滚动: 随机次数、随机距离、随机停顿，偶尔回滚一点"""
@@ -1416,44 +1580,16 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
             else:
                 time.sleep(random.uniform(0.5, 1.5))
 
-    def human_mouse_jitter(cdp, sid):
-        """偶尔移动鼠标位置，模拟人在页面上活动"""
-        if random.random() < 0.4:
-            x = random.randint(100, 800)
-            y = random.randint(100, 600)
-            cdp.send("Input.dispatchMouseEvent", {
-                "type": "mouseMoved", "x": x, "y": y
-            }, sid)
-
     try:
         for pg in range(1, max_pages + 1):
             print(f"--- [{pg}/{max_pages} 页, {len(all_jobs)} 条已抓] ---")
             incr_request()
 
-            # 第一页：导航到搜索页建立 cookie/session
-            if pg == 1:
-                url = build_search_url(keyword, city_code, pg, filters)
-                cdp.send("Page.navigate", {"url": url}, sid)
-                time.sleep(random.uniform(6, 10))
-                human_scroll(cdp, sid)
-                human_mouse_jitter(cdp, sid)
-
-            # 优先用 API 获取明文数据
-            api_params = {
-                "scene": "1",
-                "query": keyword,
-                "city": city_code,
-                "page": pg,
-                "pageSize": 30,
-            }
-            for k, v in filters.items():
-                if v:
-                    api_params[k] = v
-            api_url = f"{API_JOB_LIST_PATH}?{urlencode(api_params)}"
-            api_js = FETCH_API_JS_TEMPLATE.replace("__API_URL__", api_url)
-            val = cdp.eval_js(api_js, sid)
-
-            jobs = parse_api_jobs_eval_value(val)
+            # Navigate to the target search page and capture its own native
+            # joblist response. Do not inject a second synchronous XHR.
+            url = build_search_url(keyword, city_code, pg, filters)
+            cdp.send("Page.navigate", {"url": url}, sid)
+            jobs = wait_for_native_joblist_response(cdp, sid)
 
             # DOM 提取的薪资可能是加密字体，默认禁用；只有显式允许时才降级。
             if should_use_dom_fallback(jobs, allow_dom_fallback):
@@ -1513,6 +1649,8 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
 
     except KeyboardInterrupt:
         print("\n中断")
+    except BossAPIError:
+        raise
     except RuntimeError as e:
         print(f"\n⚠️ {e}")
     finally:
@@ -1919,13 +2057,11 @@ def run_smoke_test(cdp_port=DEFAULT_CDP_PORT):
         city_name, city_code = resolve_city(DEFAULT_CITY_INPUT)
         search_url = build_search_url(LOGIN_PROBE_QUERY, city_code, 1, {})
         tid, sid = create_page_session(cdp)
+        cdp.send("Network.enable", {}, sid)
 
         print(f"打开 BOSS 搜索页: {LOGIN_PROBE_QUERY} @ {city_name}")
         cdp.send("Page.navigate", {"url": search_url}, sid)
-        time.sleep(4)
-        api_url = f"{API_JOB_LIST_PATH}?{urlencode({'scene': '1', 'query': LOGIN_PROBE_QUERY, 'city': city_code, 'page': 1, 'pageSize': 5})}"
-        api_js = FETCH_API_JS_TEMPLATE.replace("__API_URL__", api_url)
-        jobs = parse_jobs_eval_value(cdp.eval_js(api_js, sid))
+        jobs = wait_for_native_joblist_response(cdp, sid)
         cdp.send("Target.closeTarget", {"targetId": tid})
         cdp.close()
 
@@ -1945,7 +2081,7 @@ def run_smoke_test(cdp_port=DEFAULT_CDP_PORT):
 # --check 环境检查
 # ============================================================
 def run_check(cdp_port=DEFAULT_CDP_PORT):
-    """运行环境诊断检查"""
+    """Run local dependency/CDP checks without contacting BOSS."""
     print("=" * 50)
     print("  BOSS直聘 CDP 环境检查")
     print("=" * 50)
@@ -1954,7 +2090,7 @@ def run_check(cdp_port=DEFAULT_CDP_PORT):
     all_pass = True
 
     # 检查 1: Python 依赖
-    print("[1/3] Python 依赖...")
+    print("[1/2] Python 依赖...")
     deps_ok = require_runtime_dependencies("websocket", "requests")
     if requests is not None:
         print(f"  ✅ requests 可导入")
@@ -1966,7 +2102,7 @@ def run_check(cdp_port=DEFAULT_CDP_PORT):
         all_pass = False
 
     # 检查 2: CDP 端口连通性
-    print("[2/3] CDP 端口连通性...")
+    print("[2/2] CDP 端口连通性...")
     if requests is None:
         print(f"  ❌ 跳过 — 缺少 requests")
         all_pass = False
@@ -1984,25 +2120,7 @@ def run_check(cdp_port=DEFAULT_CDP_PORT):
             print(f"  ❌ 失败 — CDP 响应异常: {e}")
             all_pass = False
 
-    # 检查 3: BOSS直聘登录状态
-    print("[3/3] BOSS直聘登录状态...")
-    if not deps_ok:
-        print(f"  ❌ 跳过 — 缺少运行依赖")
-        all_pass = False
-    else:
-        try:
-            login_result = check_login_state(cdp_port)
-            if login_result.status is LoginProbeStatus.AVAILABLE:
-                print(f"  ✅ 已登录")
-            elif login_result.status is LoginProbeStatus.EMPTY:
-                print(f"  ⚠️  {describe_login_probe_result(login_result)}")
-                all_pass = False
-            else:
-                print(f"  ❌ {describe_login_probe_result(login_result)}")
-                all_pass = False
-        except Exception as e:
-            print(f"  ❌ 检测失败: {e}")
-            all_pass = False
+    print("[说明] --check 仅检查本地依赖和 CDP，不会发送 BOSS 登录探测请求")
 
     print()
     if all_pass:
@@ -2098,7 +2216,7 @@ def iter_chrome_process_commands():
         try:
             r = subprocess.run(
                 ["powershell", "-NoProfile", "-Command", ps_script],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
             )
         except Exception:
             return []
@@ -2107,7 +2225,18 @@ def iter_chrome_process_commands():
         try:
             data = json.loads(r.stdout)
         except (json.JSONDecodeError, ValueError):
-            return []
+            # Keep a fallback for mocked or legacy process providers that
+            # return the Unix-style "pid command" format on Windows.
+            processes = []
+            for line in r.stdout.splitlines():
+                try:
+                    pid_text, command = line.strip().split(None, 1)
+                    pid = int(pid_text)
+                except (ValueError, TypeError):
+                    continue
+                if is_chrome_command(command):
+                    processes.append((pid, command))
+            return processes
         if isinstance(data, dict):
             data = [data]
         if not isinstance(data, list):
@@ -2124,7 +2253,10 @@ def iter_chrome_process_commands():
         return processes
 
     try:
-        r = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True, timeout=5)
+        r = subprocess.run(
+            ["ps", "-axo", "pid=,command="],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
+        )
     except Exception:
         return []
 
@@ -2261,8 +2393,7 @@ def run_setup_chrome(cdp_port=DEFAULT_CDP_PORT, copy_login_state=False,
     if is_cdp_ready(cdp_port):
         if cdp_port_uses_profile(cdp_port, cdp_data_dir):
             print(f"\n✅ CDP 已就绪 (端口 {cdp_port})")
-            if wait_login:
-                return 0 if wait_for_login(cdp_port, timeout=login_timeout) else 1
+            print("   不执行自动登录探测；请手动确认 BOSS 页面已登录后运行实际搜索")
             return 0
         print(f"\n❌ 端口 {cdp_port} 已被其他 Chrome CDP profile 占用")
         print(f"   请关闭旧 CDP Chrome，或改用 --cdp-port 指定其他端口")
@@ -2288,10 +2419,7 @@ def run_setup_chrome(cdp_port=DEFAULT_CDP_PORT, copy_login_state=False,
 
     print()
     print("Chrome 已启动。请在这个专用浏览器中登录 zhipin.com。")
-    if wait_login:
-        print()
-        if not wait_for_login(cdp_port, timeout=login_timeout):
-            return 1
+    print("程序不会发送登录探测请求；登录完成后请直接运行目标搜索命令。")
     print()
     print(f"示例:")
     print(f"  uv run python3 scripts/boss_cdp_raw.py --keyword \"AI Agent\" --city 上海 --pages 3")
@@ -2417,9 +2545,9 @@ def main():
     p.add_argument("--reset-chrome-profile", action="store_true",
                    help="重建 BOSS 专用 Chrome profile，会清除此专用浏览器内的登录态")
     p.add_argument("--no-wait-login", action="store_true",
-                   help="--setup-chrome 启动后不等待 BOSS 登录完成")
+                   help="兼容旧命令；当前 --setup-chrome 始终不主动探测登录")
     p.add_argument("--login-timeout", type=int, default=DEFAULT_LOGIN_TIMEOUT,
-                   help=f"--setup-chrome 等待登录完成的秒数 (默认 {DEFAULT_LOGIN_TIMEOUT})")
+                   help="兼容旧命令；当前不会发送登录探测请求")
     p.add_argument("--stop-chrome", action="store_true",
                    help="关闭 BOSS 专用 CDP Chrome（按隔离 profile 精准匹配，不影响主 Chrome）")
     p.add_argument("--close-chrome", action="store_true",
@@ -2482,30 +2610,20 @@ def main():
             list_data = json.load(f)
         print(f"从文件加载 {len(list_data.get('jobs',[]))} 条: {args.input}")
     else:
-        # 登录状态检测
-        print("检测登录状态...")
-        login_result = check_login_state(args.cdp_port)
-        if login_result.status is LoginProbeStatus.UNAUTHENTICATED:
-            print("❌ 未检测到 BOSS直聘登录状态。请先在 Chrome 中登录 zhipin.com。")
-            print(f"   可运行 --check 检查环境，或 --setup-chrome 启动 Chrome。")
-            sys.exit(1)
-        if login_result.status is LoginProbeStatus.RESTRICTED:
-            print(f"❌ {describe_login_probe_result(login_result)}，已停止抓取。")
-            print("   请先在浏览器中完成验证或稍后再试，不要重复运行登录探测。")
-            sys.exit(1)
-        if login_result.status is LoginProbeStatus.RESPONSE_ERROR:
-            print(f"❌ {describe_login_probe_result(login_result)}，已停止抓取。")
-            sys.exit(1)
-        if login_result.status is LoginProbeStatus.EMPTY:
-            print(f"⚠️  {describe_login_probe_result(login_result)}；继续执行实际职位搜索。\n")
-        else:
-            print("✅ 已登录\n")
+        # The first real search is the login/API check. Avoid a separate
+        # injected probe because BOSS may classify it as anomalous traffic.
+        print("将通过目标搜索页面自身的原生响应检查登录态；不发送额外探测请求。\n")
 
-        list_data = scrape_list(
-            args.keyword, args.city, args.pages, filters, args.output,
-            cdp_port=args.cdp_port, fmt=args.format,
-            allow_dom_fallback=args.allow_dom_fallback,
-        )
+        try:
+            list_data = scrape_list(
+                args.keyword, args.city, args.pages, filters, args.output,
+                cdp_port=args.cdp_port, fmt=args.format,
+                allow_dom_fallback=args.allow_dom_fallback,
+            )
+        except BossAPIError as exc:
+            print(f"\n❌ {exc}")
+            print("已停止抓取，请先检查浏览器登录态、网络出口和 BOSS 页面提示；不要立即重复请求。")
+            sys.exit(1)
 
     # 合并外部文件
     merged_details = None
