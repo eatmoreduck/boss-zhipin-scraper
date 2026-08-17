@@ -54,7 +54,7 @@ Right after scraping you get: salary ranges, experience requirements, top skill 
 - Incremental writes (no data loss on crash)
 - One-shot environment check + persistent isolated Chrome CDP profile
 - Multi-dimension filters (scale, funding, salary, experience, degree, industry)
-- macOS + Linux support (a Windows code path is reserved but untested — not guaranteed to work)
+- macOS + Linux support; Windows is verified by unit tests and basic CLI checks (GBK console crash fixed), real scraping flows still welcome feedback
 
 <details>
 <summary>🔍 Why not a Selenium / Playwright crawler?</summary>
@@ -227,8 +227,8 @@ boss-zhipin-scraper/
 This is a Chrome-CDP-based BOSS Zhipin crawler. Core flow:
 
 1. Connect to an already-open Chrome via the Chrome DevTools Protocol (CDP)
-2. Inject JS inside the BOSS Zhipin page that calls the search API via synchronous XHR
-3. The API returns plaintext `salaryDesc`, bypassing the front-end font obfuscation
+2. Navigate to the real search page and **passively capture the page's own search-API responses** via the CDP `Network` domain (no injected requests, avoiding BOSS risk-control flags on injected XHRs)
+3. Pagination scrolls the page to trigger its own infinite-scroll loading and keeps listening; the API returns plaintext `salaryDesc`, bypassing the front-end font obfuscation
 4. The list API preserves `securityId` / `lid` context, carried into the detail page
 5. Each page is written to disk immediately, deduped by `job_id`
 
@@ -250,7 +250,7 @@ Without an explicit `--output` or `--detail-output`, scraping results are saved 
 
 On first use you must log in to BOSS Zhipin manually inside this dedicated Chrome. `--setup-chrome` waits for the login to finish and uses the search API to confirm it can get plaintext `salaryDesc` before returning. The session is stored inside the dedicated profile and survives reboots; re-running `--setup-chrome` does not wipe it and does not affect your main Chrome, Gmail, GitHub, or other accounts.
 
-Each login-probe round sends one search request, rotates across keyword/city targets, and backs off from 3 seconds to at most 15 seconds. Probe requests count toward the same 500-request global budget. Logged-out sessions, empty probe samples, API restrictions, and malformed responses are reported separately. A confirmed restriction such as `code: 31` or `code: 37` ("您的环境存在异常" / abnormal environment) stops probing immediately instead of prompting for another login or continuing frequent retries. Unknown risk-control codes are also recognized as restrictions via message keywords (abnormal environment, too-frequent access, security check, etc.), so an authenticated session that is merely rate-limited is no longer misreported as a login failure.
+Login probing injects no requests into the page: while `--setup-chrome` waits for login, it rotates across keyword/city targets by navigating real search pages and passively captures the page's own search responses, backing off from 3 seconds to at most 15 seconds. Those page-issued requests count toward the same 500-request global budget. A regular scrape no longer sends a separate fixed-keyword probe — login/risk-control checks are done with the first real search response. Logged-out sessions, empty probe samples, API restrictions, and malformed responses are reported separately. A confirmed restriction such as `code: 31` or `code: 37` ("您的环境存在异常" / abnormal environment) stops probing immediately instead of prompting for another login or continuing frequent retries. Unknown risk-control codes are also recognized as restrictions via message keywords (abnormal environment, too-frequent access, security check, etc.), so an authenticated session that is merely rate-limited is no longer misreported as a login failure.
 
 The interactive login page opened by `--setup-chrome` is the only temporary page intentionally brought to the foreground. Temporary tabs used by environment checks, list/detail scraping, and the smoke test run in the background so automation does not repeatedly steal focus. “Background” here only means the tab is not activated; the dedicated Chrome still runs with a visible UI and can be opened manually for inspection.
 
@@ -298,4 +298,4 @@ MIT
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=eatmoreduck/boss-zhipin-scraper&type=Date)](https://star-history.com/#eatmoreduck/boss-zhipin-scraper&Date)
+[![Star History Chart](https://api.star-history.com/chart?repos=eatmoreduck/boss-zhipin-scraper&type=date&legend=top-left&sealed_token=linAWksW9v7s0YEw83L89xbRzD4QWaJWxKrQHvkJBmx9xwMH8PseUKUQC9QAcRYaBFK1jBA_Mod4Vs8qH9A47spODANKwiVWieL3CxxQ3f9ZLqHYRwzTiA)](https://www.star-history.com/?type=date&repos=eatmoreduck%2Fboss-zhipin-scraper)
