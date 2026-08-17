@@ -61,7 +61,7 @@ python3 scripts/job_summary.py
 - 一键环境检查 + 持久隔离 Chrome CDP profile
 - 多维筛选（规模、融资、薪资、经验、学历、行业）
 - 首页原生推荐：区分“精选岗位”和“最新职位”，不假设搜索页提供发布时间排序
-- macOS + Linux 支持（Windows 代码分支已预留，未经实测，不保证可用）
+- macOS + Linux 支持；Windows 已通过单元测试与基础 CLI 验证（GBK 控制台崩溃已修复），真实抓取链路仍欢迎反馈
 
 <details>
 <summary>🔍 为什么不选 Selenium / Playwright 类爬虫？</summary>
@@ -237,8 +237,8 @@ boss-zhipin-scraper/
 这是一个基于 Chrome CDP 的 BOSS直聘爬虫，核心流程：
 
 1. 通过 Chrome DevTools Protocol (CDP) 连接到已打开的 Chrome
-2. 在 BOSS直聘页面内注入 JS，用同步 XHR 调用搜索 API
-3. API 返回明文 `salaryDesc`，绕过前端字体反爬
+2. 导航到真实搜索页，通过 CDP `Network` 域**被动捕获页面自身发出的搜索 API 响应**（不发任何注入请求，规避 BOSS 对注入 XHR 的风控识别）
+3. 翻页通过滚动触发页面自身的无限滚动加载，继续旁听其请求；API 返回明文 `salaryDesc`，绕过前端字体反爬
 4. 列表 API 保留 `securityId` / `lid` 等上下文，进入详情页时带上这些参数
 5. 每页抓完立即写入文件，按 `job_id` 去重
 
@@ -262,7 +262,7 @@ boss-zhipin-scraper/
 
 首次使用需要在这个专用 Chrome 中手动登录 BOSS直聘。`--setup-chrome` 会等待登录完成，并用搜索接口确认能拿到明文 `salaryDesc` 后再返回。登录态保存在专用 profile 内，重启机器后仍然保留；重复运行 `--setup-chrome` 不会清空它，也不会影响主 Chrome、Gmail、GitHub 等账号。
 
-登录探测每轮只发送一个搜索请求，并在不同关键词/城市之间轮换，等待间隔会从 3 秒逐步退避到最多 15 秒；这些请求同样计入单次 500 次的全局请求预算。未登录、探测样本为空、接口限制和响应异常会分别提示。遇到已确认的限制状态（例如 `code: 31`、`code: 37`「您的环境存在异常」）会立即停止探测，不会继续提示重复登录或密集重试；对未知风控码还会按 message 关键字（环境存在异常、访问频繁、安全校验等）兜底识别为限制状态，避免把「已登录但被风控」误判为登录失败。
+登录探测不向页面注入任何请求：`--setup-chrome` 等待登录时会在不同关键词/城市之间轮换导航真实搜索页，被动捕获页面自身发出的搜索响应，等待间隔从 3 秒逐步退避到最多 15 秒；这些页面请求同样计入单次 500 次的全局请求预算。正式抓取不再单独发送固定关键词的探测请求，登录/风控判定直接用第一次真实搜索的响应完成。未登录、探测样本为空、接口限制和响应异常会分别提示。遇到已确认的限制状态（例如 `code: 31`、`code: 37`「您的环境存在异常」）会立即停止探测，不会继续提示重复登录或密集重试；对未知风控码还会按 message 关键字（环境存在异常、访问频繁、安全校验等）兜底识别为限制状态，避免把「已登录但被风控」误判为登录失败。
 
 `--setup-chrome` 的交互式登录页是唯一会主动置前的临时页面；环境检查、列表/详情抓取和 smoke test 创建的临时标签页都会在后台运行，避免自动流程反复抢占当前窗口。这里的“后台”仅表示不激活标签页，专用 Chrome 仍以有界面模式运行，必要时可以手动打开检查。
 
@@ -310,4 +310,4 @@ MIT
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=eatmoreduck/boss-zhipin-scraper&type=Date)](https://star-history.com/#eatmoreduck/boss-zhipin-scraper&Date)
+[![Star History Chart](https://api.star-history.com/chart?repos=eatmoreduck/boss-zhipin-scraper&type=date&legend=top-left&sealed_token=linAWksW9v7s0YEw83L89xbRzD4QWaJWxKrQHvkJBmx9xwMH8PseUKUQC9QAcRYaBFK1jBA_Mod4Vs8qH9A47spODANKwiVWieL3CxxQ3f9ZLqHYRwzTiA)](https://www.star-history.com/?type=date&repos=eatmoreduck%2Fboss-zhipin-scraper)
