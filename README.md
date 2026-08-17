@@ -7,7 +7,7 @@
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)
 ![Version](https://img.shields.io/badge/version-2.2.0-orange.svg)
 
-一个轻量的 **BOSS直聘爬虫（spider / crawler / scraper）**：通过 Chrome DevTools Protocol 连接本地已登录的 Chrome，复用真实登录态调用 zhipin.com 搜索 API，绕过前端字体反爬，输出含**明文薪资**的职位数据（JSON / CSV），并生成薪资分布、技能词频和求职材料优化提示词。同时作为 Hermes Agent Skill 提供。
+一个轻量的 **BOSS直聘爬虫（spider / crawler / scraper）**：通过 Chrome DevTools Protocol 连接本地已登录的 Chrome，复用真实登录态读取 zhipin.com 搜索页面自身的原生搜索响应，输出含**明文薪资**的职位数据（JSON / CSV），并生成薪资分布、技能词频和求职材料优化提示词。同时作为 Hermes Agent Skill 提供。
 
 > 📌 **一句话介绍**：不用 Selenium/Playwright，直接通过 Chrome DevTools Protocol 连接本地已登录的 Chrome，复用真实登录态调搜索 API，输出含明文薪资的 JSON/CSV，并生成薪资分布、技能词频和求职材料优化提示词。
 
@@ -55,6 +55,7 @@ python3 scripts/job_summary.py
 - 抓取后聚合摘要 + 可复制提示词
 - 增量写入（异常退出不丢数据）
 - 一键环境检查 + 持久隔离 Chrome CDP profile
+- 搜索阶段监听页面原生网络响应，不额外注入同步 XHR；遇到 BOSS `code 37` 会立即停止，避免重复探测
 - 多维筛选（规模、融资、薪资、经验、学历、行业）
 - macOS + Linux 支持；Windows 已通过单元测试与基础 CLI 验证（GBK 控制台崩溃已修复），真实抓取链路仍欢迎反馈
 
@@ -137,7 +138,7 @@ pip install -r requirements.txt
 # 2. 启动 Chrome CDP
 python3 scripts/boss_cdp_raw.py --setup-chrome
 # 首次使用也不会复制主 Chrome 登录态；请在弹出的 BOSS 专用浏览器中登录 zhipin.com
-# setup 会等待登录完成，并确认接口能返回明文薪资
+# setup 不发送额外的登录探测请求；登录完成后直接运行目标搜索命令
 
 # 3. 检查环境
 python3 scripts/boss_cdp_raw.py --check
@@ -166,7 +167,7 @@ python3 scripts/job_summary.py --top 15
 | `--analysis` | 分析报告 |
 | `--merge FILE` | 合并已有数据（按 job_id 去重） |
 | `--allow-dom-fallback` | API 无数据时允许降级 DOM 提取；默认关闭，薪资可能不可信 |
-| `--check` | 环境检查（CDP + 依赖 + 登录态） |
+| `--check` | 环境检查（仅 CDP + 依赖，不发送 BOSS 登录探测请求） |
 | `--smoke-test` | 用真实 Chrome/CDP 跑一次 BOSS 搜索 API smoke test，不写结果文件 |
 | `--setup-chrome` | 一键启动 Chrome CDP（持久隔离 profile） |
 | `--copy-login-state` | 手动导入主 Chrome 的 Local State + Cookie 相关文件到隔离 profile（默认、首次启动、重复启动都不复制） |

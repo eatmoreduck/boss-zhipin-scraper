@@ -16,6 +16,8 @@
 - 城市码表外置为 `data/city_codes.json`（全量 300+ 城市，覆盖一二三四五线），新增 `--list-cities [关键词]` 命令查看支持的城市；`resolve_city` 查询链改为「本地静态码表 → 运行时拉 BOSS 接口 → 9 位裸码兜底」。城市码表打进 wheel，`pip install` 用户也可用。（#24）
 
 ### 修复
+- 列表搜索和 smoke test 改为监听搜索页面自身的原生 `Network` 响应，不再在页面中额外注入同步 XHR；BOSS 返回 `code 37` 时立即停止并保留风控信息，避免重复登录探测和无意义重试（#30）
+- Windows CLI 和进程枚举统一使用 UTF-8 容错解码，修复中文/emoji 诊断输出导致的子进程解析异常；`--check` 改为只检查本地依赖与 CDP，不主动访问 BOSS
 - Windows 兼容：`main()` 入口将 stdout/stderr 重配为 UTF-8，修复 Windows GBK 控制台遇到 emoji（✅❌⚠️ 等）输出直接 `UnicodeEncodeError` 崩溃的问题（实测此前 73 个单测中 8 个因此失败）
 - JSON 落盘改为原子写入（临时文件 + `os.replace`）：进程中断不再留下半截 JSON 覆盖旧数据；`flush_jobs`、详情页写入与 `--merge` 详情落盘统一走 `_atomic_write_json`
 - `--check` 的 CDP 连通检查不再把任意 CDP 服务误报为「Chrome」，改为输出实际服务标识
