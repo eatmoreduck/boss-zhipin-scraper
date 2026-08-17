@@ -34,8 +34,9 @@
 - API URL filter 改用 `urlencode`（原字符串拼接，filter 值含特殊字符会出错）
 
 ### 变更
+- 新增 Microsoft Edge CDP 支持：`--setup-edge`、`--stop-edge` 和 `--browser edge`；保留默认 Chrome 与原有 `--setup-chrome` 参数，Windows 进程识别同时覆盖 `chrome.exe` 和 `msedge.exe`。（#41）
+- 平台支持声明更新为 macOS + Linux + Windows，并补充 Chrome/Edge CDP 启动与进程识别路径
 - 平台支持声明更新：Windows 已通过单元测试与基础 CLI 验证（GBK 控制台崩溃等已修复），README 中英双语同步调整（此前 v2.0.0 撤回的"未经实测"声明在本修复后更新）
-- 平台支持声明改为 macOS + Linux（Windows 代码分支保留但未经实测，不再声称支持，避免过度承诺）
 - `pyproject.toml` 删除空的 `[csv]` extra（csv 是标准库）
 - SKILL.md 脚本路径解析改用 Python `os.path.realpath`（macOS 自带 `readlink` 无 `-f`）
 

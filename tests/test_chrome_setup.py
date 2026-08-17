@@ -1170,6 +1170,33 @@ class ChromeSetupTests(unittest.TestCase):
                 r"C:\Users\leon\AppData\Local\Google\Chrome\User Data",
             )
 
+    def test_windows_default_paths_support_edge(self):
+        module = load_module()
+        env = {
+            "LOCALAPPDATA": r"C:\Users\leon\AppData\Local",
+            "PROGRAMFILES": r"C:\Program Files",
+            "PROGRAMFILES(X86)": r"C:\Program Files (x86)",
+        }
+        expected_edge = r"C:\Users\leon\AppData\Local\Microsoft\Edge\Application\msedge.exe"
+        with mock.patch.object(module.platform, "system", return_value="Windows"), \
+                mock.patch.dict(module.os.environ, env, clear=False), \
+                mock.patch.object(module.os.path, "exists", side_effect=lambda p: p == expected_edge):
+            self.assertEqual(module.get_default_edge_path(), expected_edge)
+            self.assertEqual(
+                module.get_default_profile_dir("edge"),
+                r"C:\Users\leon\AppData\Local\Microsoft\Edge\User Data",
+            )
+
+    def test_browser_process_predicate_distinguishes_chrome_and_edge(self):
+        module = load_module()
+        edge_command = r'"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --user-data-dir=C:\edge-profile'
+        chrome_command = r'"C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir=C:\chrome-profile'
+
+        self.assertTrue(module.is_supported_browser_command(edge_command, "edge"))
+        self.assertFalse(module.is_supported_browser_command(edge_command, "chrome"))
+        self.assertTrue(module.is_supported_browser_command(chrome_command, "chrome"))
+        self.assertTrue(module.is_supported_browser_command(edge_command))
+
     def test_windows_process_parsing_matches_user_data_dir_and_cdp_port(self):
         module = load_module()
         ps_json = json.dumps([{
@@ -1327,6 +1354,38 @@ class ChromeSetupTests(unittest.TestCase):
         launched = calls["popen"][0]
         self.assertIn(expected_profile_arg, launched)
         wait_login.assert_called_once_with(9333, timeout=module.DEFAULT_LOGIN_TIMEOUT)
+
+    def test_setup_edge_uses_edge_executable_and_profile_source(self):
+        module = load_module()
+        calls = {"run": [], "popen": []}
+        fake_requests = mock.Mock()
+        responses = iter([
+            Exception("not ready"),
+            type("Resp", (), {"status_code": 200})(),
+        ])
+
+        def fake_get(*args, **kwargs):
+            response = next(responses)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        with tempfile_profile() as paths:
+            expected_profile_arg = f"--user-data-dir={paths['cdp_profile']}"
+            with mock.patch.object(module, "DEFAULT_EDGE_PATH", r"C:\Edge\msedge.exe"), \
+                    mock.patch.object(module, "DEFAULT_EDGE_PROFILE_DIR", str(paths["source_profile"])), \
+                    mock.patch.object(module, "DEFAULT_CDP_DATA_DIR", str(paths["cdp_profile"])), \
+                    mock.patch.object(module, "requests", fake_requests), \
+                    mock.patch.object(module.subprocess, "run", side_effect=lambda *args, **kwargs: fake_run(calls, *args, **kwargs)), \
+                    mock.patch.object(module.subprocess, "Popen", side_effect=lambda cmd, **kwargs: calls["popen"].append(cmd)), \
+                    mock.patch.object(module.time, "sleep", return_value=None), \
+                    mock.patch.object(module, "wait_for_login", return_value=True):
+                fake_requests.get.side_effect = fake_get
+                self.assertEqual(module.run_setup_chrome(cdp_port=9333, browser="edge"), 0)
+
+        launched = calls["popen"][0]
+        self.assertEqual(launched[0], r"C:\Edge\msedge.exe")
+        self.assertIn(expected_profile_arg, launched)
 
     def test_copy_login_state_is_explicit_and_does_not_copy_password_databases(self):
         module = load_module()
@@ -1509,6 +1568,8 @@ class ChromeSetupTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0)
         self.assertIn("--setup-chrome", result.stdout)
+        self.assertIn("--setup-edge", result.stdout)
+        self.assertIn("--browser", result.stdout)
         self.assertIn("--reset-chrome-profile", result.stdout)
         self.assertIn("--no-wait-login", result.stdout)
         self.assertIn("--login-timeout", result.stdout)
