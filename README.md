@@ -35,6 +35,10 @@ python3 scripts/boss_cdp_raw.py --setup-chrome
 # 3. 抓取 + 分析
 python3 scripts/boss_cdp_raw.py --keyword "AI Agent" --city 上海 --pages 3 --analysis
 
+# 读取首页精选岗位与最新职位（只读原生响应）
+python3 scripts/boss_cdp_raw.py --mode homepage \
+  --homepage-url "https://www.zhipin.com/chengdu/?ka=header-home"
+
 # 支持全国城市（含三四五线），例如：
 python3 scripts/boss_cdp_raw.py --keyword "前端" --city 赣州 --pages 3
 # 查看支持的城市：--list-cities [关键词]
@@ -56,6 +60,7 @@ python3 scripts/job_summary.py
 - 增量写入（异常退出不丢数据）
 - 一键环境检查 + 持久隔离 Chrome CDP profile
 - 多维筛选（规模、融资、薪资、经验、学历、行业）
+- 首页原生推荐：区分“精选岗位”和“最新职位”，不假设搜索页提供发布时间排序
 - macOS + Linux 支持；Windows 已通过单元测试与基础 CLI 验证（GBK 控制台崩溃已修复），真实抓取链路仍欢迎反馈
 
 <details>
@@ -166,6 +171,10 @@ python3 scripts/job_summary.py --top 15
 | `--analysis` | 分析报告 |
 | `--merge FILE` | 合并已有数据（按 job_id 去重） |
 | `--allow-dom-fallback` | API 无数据时允许降级 DOM 提取；默认关闭，薪资可能不可信 |
+| `--mode homepage` | 读取首页原生岗位响应；`sortType=1` 标记为精选，`sortType=2` 标记为最新 |
+| `--homepage-url` | homepage 模式目标地址，必须是 `https://www.zhipin.com/` 下的地址 |
+| `--capture-seconds` | homepage 模式监听原生响应的时间窗口（5-30 秒，默认 15） |
+| `--stdout` | homepage 模式把 JSON 输出到 stdout，日志输出到 stderr |
 | `--check` | 环境检查（CDP + 依赖 + 登录态） |
 | `--smoke-test` | 用真实 Chrome/CDP 跑一次 BOSS 搜索 API smoke test，不写结果文件 |
 | `--setup-chrome` | 一键启动 Chrome CDP（持久隔离 profile） |
@@ -232,6 +241,8 @@ boss-zhipin-scraper/
 3. 翻页通过滚动触发页面自身的无限滚动加载，继续旁听其请求；API 返回明文 `salaryDesc`，绕过前端字体反爬
 4. 列表 API 保留 `securityId` / `lid` 等上下文，进入详情页时带上这些参数
 5. 每页抓完立即写入文件，按 `job_id` 去重
+
+首页模式会监听页面自身发出的 JSON 响应，按响应查询参数中的 `sortType=1/2` 区分精选和最新岗位。它只保存公开岗位字段与接口路径/JSON 路径等安全来源信息，不保存原始响应、完整响应 URL、Cookie、聊天内容或浏览器 profile 数据。
 
 默认不会使用 DOM 提取列表，因为 DOM 薪资可能受字体反爬影响。只有明确传 `--allow-dom-fallback` 时，API 无数据才会降级 DOM。
 

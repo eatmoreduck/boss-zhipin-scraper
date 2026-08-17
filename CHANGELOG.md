@@ -11,6 +11,7 @@
 - 删除死代码：`FETCH_API_JS_TEMPLATE`、`build_login_probe_url`、`parse_api_jobs_eval_value`、`should_use_dom_fallback`；`CDPSession` 新增事件缓冲与 `drain_events`；测试从 92 增至 96 个
 
 ### 新增
+- 新增 `--mode homepage`，监听 BOSS 首页原生岗位响应，按 `sortType=1/2` 输出精选岗位与最新职位；只保存公开岗位字段和安全来源路径，不保存完整响应 URL或个人会话数据（#64）
 - 详情/列表结果新增独立字段 `boss_active_status`（如「今日活跃」「在线」）：列表兼容 `activeTimeDesc` 与 `bossOnline`（仅在线时映射为「在线」）；详情页从招聘者卡片解析更细粒度状态并优先保留；JD 正文仍剔除该行，不混入描述
 - 新增 `--stop-chrome` 命令：抓取/分析完成后关闭 BOSS 专用 CDP Chrome（按 user-data-dir 精准匹配隔离 profile，不碰主 Chrome）；抓取命令新增 `--close-chrome` 选项，正常结束后自动收尾（默认关闭，异常退出不触发以保留登录态）。复用已有 `stop_cdp_chrome` 的安全匹配逻辑，补齐进程关闭/收尾链路的单元测试。（#26）
 - 城市码表外置为 `data/city_codes.json`（全量 300+ 城市，覆盖一二三四五线），新增 `--list-cities [关键词]` 命令查看支持的城市；`resolve_city` 查询链改为「本地静态码表 → 运行时拉 BOSS 接口 → 9 位裸码兜底」。城市码表打进 wheel，`pip install` 用户也可用。（#24）
