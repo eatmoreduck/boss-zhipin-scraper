@@ -9,6 +9,12 @@ import unittest
 from unittest import mock
 
 
+# 同 tests/test_chrome_setup.py：Windows GBK 控制台无法编码 emoji，统一重配 UTF-8。
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 ROOT_PATH = pathlib.Path(__file__).resolve().parents[1]
 SUMMARY_SCRIPT_PATH = ROOT_PATH / "scripts" / "job_summary.py"
 
