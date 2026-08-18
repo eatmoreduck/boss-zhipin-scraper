@@ -158,6 +158,26 @@ class ChromeSetupTests(unittest.TestCase):
         )
         cdp.close.assert_called_once_with()
 
+    def test_login_check_uses_foreground_target(self):
+        module = load_module()
+        cdp = mock.Mock()
+        available = module.LoginProbeResult(module.LoginProbeStatus.AVAILABLE)
+        with mock.patch.object(module, "CDPSession", return_value=cdp), \
+                mock.patch.object(
+                    module,
+                    "create_page_session",
+                    return_value=("check-target", "check-session"),
+                ) as create_session, \
+                mock.patch.object(
+                    module,
+                    "probe_login_state",
+                    return_value=available,
+                ):
+            result = module.check_login_state(cdp_port=9333)
+
+        self.assertIs(result, available)
+        create_session.assert_called_once_with(cdp, background=False)
+
     def test_default_city_is_shanghai_when_not_provided(self):
         module = load_module()
 
@@ -953,6 +973,34 @@ class ChromeSetupTests(unittest.TestCase):
                 "Java", "上海", pages, {}, output_path, cdp_port=9333,
             )
 
+    def test_list_scrape_uses_foreground_target(self):
+        module = load_module()
+        cdp = mock.Mock()
+        capture = mock.Mock()
+        with mock.patch.object(module, "CDPSession", return_value=cdp), \
+                mock.patch.object(
+                    module,
+                    "create_page_session",
+                    return_value=("list-target", "list-session"),
+                ) as create_session, \
+                mock.patch.object(
+                    module,
+                    "NetworkJoblistCapture",
+                    return_value=capture,
+                ), \
+                mock.patch.object(
+                    module,
+                    "resolve_city",
+                    return_value=("上海", "101020100"),
+                ):
+            result = module.scrape_list(
+                "AI Agent", "上海", 0, {}, None, cdp_port=9333,
+            )
+
+        self.assertEqual(result["total"], 0)
+        create_session.assert_called_once_with(cdp, background=False)
+        capture.enable.assert_called_once_with()
+
     def test_scrape_list_captures_pages_via_network_events(self):
         module = load_module()
         page1 = {"code": 0, "zpData": {"hasMore": True, "jobList": [
@@ -1206,6 +1254,41 @@ class ChromeSetupTests(unittest.TestCase):
             "salary_source": "api_empty",
             "job_link": "https://www.zhipin.com/job_detail/abc.html",
         }]))
+
+    def test_smoke_test_uses_foreground_target(self):
+        module = load_module()
+        cdp = mock.Mock()
+        capture = mock.Mock()
+        capture.wait_next_response.return_value = {
+            "code": 0,
+            "zpData": {"jobList": [{
+                "jobName": "Java Engineer",
+                "salaryDesc": "10-15K",
+                "encryptJobId": "abc",
+            }]},
+        }
+        with mock.patch.object(
+                module, "require_runtime_dependencies", return_value=True), \
+                mock.patch.object(module, "CDPSession", return_value=cdp), \
+                mock.patch.object(
+                    module,
+                    "create_page_session",
+                    return_value=("smoke-target", "smoke-session"),
+                ) as create_session, \
+                mock.patch.object(
+                    module,
+                    "NetworkJoblistCapture",
+                    return_value=capture,
+                ), \
+                mock.patch.object(
+                    module,
+                    "resolve_city",
+                    return_value=("上海", "101020100"),
+                ):
+            exit_code = module.run_smoke_test(cdp_port=9333)
+
+        self.assertEqual(exit_code, 0)
+        create_session.assert_called_once_with(cdp, background=False)
 
     def test_write_detail_csv_exports_detail_fields(self):
         module = load_module()

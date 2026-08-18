@@ -400,8 +400,8 @@ def create_page_session(cdp, background=True):
 
     Background pages report themselves as hidden, which prevents BOSS detail
     pages from rendering reliably. Register the existing visibility override
-    before callers navigate. Interactive callers such as the login flow must
-    opt into a foreground target explicitly.
+    before callers navigate. Interactive flows and search-related callers that
+    need foreground compatibility must pass ``background=False`` explicitly.
     """
     target = cdp.send(
         "Target.createTarget",
@@ -1102,7 +1102,7 @@ def check_login_state(cdp_port=DEFAULT_CDP_PORT):
     tid = None
     try:
         cdp = CDPSession(cdp_port)
-        tid, sid = create_page_session(cdp)
+        tid, sid = create_page_session(cdp, background=False)
 
         # probe_login_state 会导航到真实搜索页并被动捕获页面自身的响应
         return probe_login_state(cdp, sid)
@@ -1484,7 +1484,7 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
         print(f"筛选: {' | '.join(filter_desc)}")
     print()
 
-    tid, sid = create_page_session(cdp)
+    tid, sid = create_page_session(cdp, background=False)
     capture = NetworkJoblistCapture(cdp, sid)
     capture.enable()
 
@@ -2028,7 +2028,7 @@ def run_smoke_test(cdp_port=DEFAULT_CDP_PORT):
     try:
         cdp = CDPSession(cdp_port)
         city_name, city_code = resolve_city(DEFAULT_CITY_INPUT)
-        tid, sid = create_page_session(cdp)
+        tid, sid = create_page_session(cdp, background=False)
         capture = NetworkJoblistCapture(cdp, sid)
         capture.enable()
 
