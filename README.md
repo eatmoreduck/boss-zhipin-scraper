@@ -152,6 +152,24 @@ python3 scripts/boss_cdp_raw.py --keyword "AI Agent" --city 上海 --pages 3 --f
 python3 scripts/job_summary.py --top 15
 ```
 
+## 图形界面（桌面 GUI）
+
+不想敲命令行时，可以启动内置的 tkinter 桌面界面（零额外依赖）：
+
+```bash
+python3 scripts/boss_gui.py
+# 或打包安装后
+uv run boss-gui
+```
+
+界面里可以填写关键词 / 城市 / 页数 / CDP 端口、勾选 CSV 输出、详情页与分析报告，并一键运行「环境检查」「启动 Chrome」「Smoke 测试」「开始抓取」「生成摘要」「关闭 Chrome」。勾选 **「抓取完成后自动生成摘要」** 后，抓取正常结束（exit 0）会自动接跑 `scripts/job_summary.py`，不用再手动运行第二个文件；输出面板实时显示日志，可随时「停止」。
+
+注意：GUI 默认**不抓详情页**（速度快），需要 JD 时勾选「抓详情页」。首次使用请先「启动 Chrome」并在弹出的专用浏览器中登录 zhipin.com。
+
+关键词支持填多个（用英文/中文逗号、分号或换行分隔），GUI 会逐个抓取并用 `--merge` 自动合并去重，最后对合并结果生成一份摘要。
+
+结果目录可以在界面中自定义（含「浏览...」按钮），默认取 `$BOSS_RESULT_DIR` 指定的目录（未设置时为 `~/.boss-zhipin-scraper/job-result`）。
+
 ## 参数
 
 | 参数 | 说明 |
@@ -175,8 +193,8 @@ python3 scripts/job_summary.py --top 15
 | `--login-timeout` | `--setup-chrome` 等待登录完成的秒数（默认 300） |
 | `--stop-chrome` | 关闭 BOSS 专用 CDP Chrome（按隔离 profile 精准匹配，不碰主 Chrome） |
 | `--close-chrome` | 抓取正常结束后自动关闭专用 Chrome（默认不关；异常退出不触发，保留登录态） |
-| `--output` | 列表输出路径（默认 `~/.boss-zhipin-scraper/job-result/`） |
-| `--detail-output` | 详情输出路径（默认 `~/.boss-zhipin-scraper/job-result/`） |
+| `--output` | 列表输出路径（默认 `$BOSS_RESULT_DIR`，未设置时为 `~/.boss-zhipin-scraper/job-result/`） |
+| `--detail-output` | 详情输出路径（默认 `$BOSS_RESULT_DIR`，未设置时为 `~/.boss-zhipin-scraper/job-result/`） |
 | `--cdp-port` | CDP 端口（默认 9222） |
 | `--scale/--salary/--experience/--degree` | 筛选条件 |
 
@@ -219,6 +237,7 @@ boss-zhipin-scraper/
 │   └── city_codes.json   # 全量城市码表
 ├── scripts/
 │   ├── boss_cdp_raw.py   # 抓取主脚本
+│   ├── boss_gui.py       # 桌面图形界面（薄壳，调 boss_cdp_raw.py）
 │   └── job_summary.py    # 抓取后摘要 + 提示词
 └── requirements.txt
 ```
@@ -247,7 +266,7 @@ boss-zhipin-scraper/
 
 未显式指定 `--output` 或 `--detail-output` 时，抓取结果默认保存到：
 
-- `~/.boss-zhipin-scraper/job-result`
+- `~/.boss-zhipin-scraper/job-result`（可用环境变量 `BOSS_RESULT_DIR` 覆盖，例如 `D:\projects\boss-zhipin-scraper\job-result`）
 
 首次使用需要在这个专用 Chrome 中手动登录 BOSS直聘。`--setup-chrome` 会等待登录完成，并用搜索接口确认能拿到明文 `salaryDesc` 后再返回。登录态保存在专用 profile 内，重启机器后仍然保留；重复运行 `--setup-chrome` 不会清空它，也不会影响主 Chrome、Gmail、GitHub 等账号。
 

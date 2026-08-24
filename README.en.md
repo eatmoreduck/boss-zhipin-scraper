@@ -150,6 +150,24 @@ python3 scripts/boss_cdp_raw.py --keyword "AI Agent" --city 上海 --pages 3 --f
 python3 scripts/job_summary.py --top 15
 ```
 
+## Desktop GUI
+
+Prefer clicking over typing commands? A small tkinter desktop GUI ships with the repo (zero extra dependencies):
+
+```bash
+python3 scripts/boss_gui.py
+# or after installing the package
+uv run boss-gui
+```
+
+Fill in keyword / city / pages / CDP port, tick CSV output, detail pages and the analysis report, then run one-click actions: Environment check, Launch Chrome, Smoke test, Start scrape, Generate summary, Close Chrome. When **“Auto-generate summary after scrape”** is checked, a successful scrape (exit 0) automatically runs `scripts/job_summary.py` next — no need to launch the second file by hand. Output streams into the log pane in real time and can be stopped anytime.
+
+Note: the GUI does **not** scrape detail pages by default (fast); tick “Scrape detail pages” when you need JDs. First-time users should click “Launch Chrome” and log in to zhipin.com in the dedicated browser that pops up.
+
+The keyword field accepts multiple keywords separated by commas (English or Chinese), semicolons, or newlines. The GUI scrapes them one by one, merges the results with `--merge` (deduped by `job_id`), and generates one summary for the combined result.
+
+The result directory is customizable in the GUI (with a “Browse…” button), defaulting to the directory set by `$BOSS_RESULT_DIR` (or `~/.boss-zhipin-scraper/job-result` when unset).
+
 ## Parameters
 
 | Parameter | Description |
@@ -173,8 +191,8 @@ python3 scripts/job_summary.py --top 15
 | `--login-timeout` | Seconds to wait for login under `--setup-chrome` (default 300) |
 | `--stop-chrome` | Close the dedicated BOSS CDP Chrome (matched precisely by the isolated profile; never touches your main Chrome) |
 | `--close-chrome` | Auto-close the dedicated Chrome after a scrape finishes normally (off by default; not triggered on errors, so the login state is kept) |
-| `--output` | List output path (default `~/.boss-zhipin-scraper/job-result/`) |
-| `--detail-output` | Detail output path (default `~/.boss-zhipin-scraper/job-result/`) |
+| `--output` | List output path (default `$BOSS_RESULT_DIR`, falling back to `~/.boss-zhipin-scraper/job-result/`) |
+| `--detail-output` | Detail output path (default `$BOSS_RESULT_DIR`, falling back to `~/.boss-zhipin-scraper/job-result/`) |
 | `--cdp-port` | CDP port (default 9222) |
 | `--scale/--salary/--experience/--degree` | Filters |
 
@@ -218,6 +236,7 @@ boss-zhipin-scraper/
 │   └── city_codes.json   # Full city-code map
 ├── scripts/
 │   ├── boss_cdp_raw.py   # Main scraping script
+│   ├── boss_gui.py       # Desktop GUI (thin shell around boss_cdp_raw.py)
 │   └── job_summary.py    # Post-scrape summary + prompt
 └── requirements.txt
 ```
@@ -246,7 +265,7 @@ For detail pages, the scraper only extracts a section containing the job-descrip
 
 Without an explicit `--output` or `--detail-output`, scraping results are saved under:
 
-- `~/.boss-zhipin-scraper/job-result`
+- `~/.boss-zhipin-scraper/job-result` (override with the `BOSS_RESULT_DIR` environment variable, e.g. `D:\projects\boss-zhipin-scraper\job-result`)
 
 On first use you must log in to BOSS Zhipin manually inside this dedicated Chrome. `--setup-chrome` waits for the login to finish and uses the search API to confirm it can get plaintext `salaryDesc` before returning. The session is stored inside the dedicated profile and survives reboots; re-running `--setup-chrome` does not wipe it and does not affect your main Chrome, Gmail, GitHub, or other accounts.
 
