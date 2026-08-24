@@ -11,11 +11,15 @@
 - 删除死代码：`FETCH_API_JS_TEMPLATE`、`build_login_probe_url`、`parse_api_jobs_eval_value`、`should_use_dom_fallback`；`CDPSession` 新增事件缓冲与 `drain_events`；测试从 92 增至 96 个
 
 ### 新增
+- 结果目录支持 `$BOSS_RESULT_DIR` 环境变量覆盖（默认仍为 `~/.boss-zhipin-scraper/job-result`），GUI 增加「结果目录」自定义输入框与「浏览...」按钮，抓取/摘要均按自定义目录显式落盘；GUI 支持多关键词（英文/中文逗号、分号或换行分隔，逐个抓取并用 `--merge` 自动合并去重，最后对合并结果生成一份摘要）
+- 新增桌面图形界面 `scripts/boss_gui.py`（tkinter，零额外依赖）：可视化配置关键词 / 城市 / 页数 / CDP 端口 / CSV / 详情页 / 分析报告，一键运行「环境检查」「启动 Chrome」「Smoke 测试」「开始抓取」「生成摘要」「关闭 Chrome」；勾选「抓取完成后自动生成摘要」后，抓取正常结束（exit 0）会自动接跑 `scripts/job_summary.py`。GUI 默认不抓详情页避免长时间运行，并新增 `boss-gui` 命令入口
+
 - 详情/列表结果新增独立字段 `boss_active_status`（如「今日活跃」「在线」）：列表兼容 `activeTimeDesc` 与 `bossOnline`（仅在线时映射为「在线」）；详情页从招聘者卡片解析更细粒度状态并优先保留；JD 正文仍剔除该行，不混入描述
 - 新增 `--stop-chrome` 命令：抓取/分析完成后关闭 BOSS 专用 CDP Chrome（按 user-data-dir 精准匹配隔离 profile，不碰主 Chrome）；抓取命令新增 `--close-chrome` 选项，正常结束后自动收尾（默认关闭，异常退出不触发以保留登录态）。复用已有 `stop_cdp_chrome` 的安全匹配逻辑，补齐进程关闭/收尾链路的单元测试。（#26）
 - 城市码表外置为 `data/city_codes.json`（全量 300+ 城市，覆盖一二三四五线），新增 `--list-cities [关键词]` 命令查看支持的城市；`resolve_city` 查询链改为「本地静态码表 → 运行时拉 BOSS 接口 → 9 位裸码兜底」。城市码表打进 wheel，`pip install` 用户也可用。（#24）
 
 ### 修复
+- 修复 GUI 任务收尾事件解包错误：此前 smoke 测试 / 抓取结束后轮询器崩溃，导致「完成」消息不显示、状态卡在「运行中」、自动摘要不触发，且后续按钮被误判为「已有任务在运行」
 - Windows 兼容：`main()` 入口将 stdout/stderr 重配为 UTF-8，修复 Windows GBK 控制台遇到 emoji（✅❌⚠️ 等）输出直接 `UnicodeEncodeError` 崩溃的问题（实测此前 73 个单测中 8 个因此失败）
 - JSON 落盘改为原子写入（临时文件 + `os.replace`）：进程中断不再留下半截 JSON 覆盖旧数据；`flush_jobs`、详情页写入与 `--merge` 详情落盘统一走 `_atomic_write_json`
 - `--check` 的 CDP 连通检查不再把任意 CDP 服务误报为「Chrome」，改为输出实际服务标识

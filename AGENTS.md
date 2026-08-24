@@ -11,10 +11,13 @@
 ```
 scripts/boss_cdp_raw.py   # 核心：抓取 + CLI 主入口（长单文件，行数以实际为准）
 scripts/job_summary.py    # 抓取结果 → Markdown 求职分析摘要
+scripts/boss_gui.py       # 桌面图形界面（薄 UI 壳：子进程调 boss_cdp_raw.py，exit 0 后可自动接跑 job_summary.py；不含抓取逻辑）
 data/city_codes.json      # 全量城市码表（300+ 城市，外置；见下）
+job-result/               # 抓取结果默认目录（.gitignore 忽略的本地产物；可用 $BOSS_RESULT_DIR 覆盖）
 tests/test_chrome_setup.py    # unittest，全 mock，不依赖真实 Chrome/网络
 tests/test_job_summary.py     # 摘要测试
-pyproject.toml            # hatchling 打包；入口 boss-scraper / boss-summary
+tests/test_gui_chain.py       # GUI 命令行拼装 + 自动接跑摘要判定
+pyproject.toml            # hatchling 打包；入口 boss-scraper / boss-summary / boss-gui
 requirements.txt          # 仅 requests + websocket-client
 SKILL.md / README(.en).md / CHANGELOG.md / CONTRIBUTING.md
 ```

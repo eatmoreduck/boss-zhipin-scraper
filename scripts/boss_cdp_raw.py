@@ -110,7 +110,17 @@ DEFAULT_CHROME_PATH = get_default_chrome_path()
 DEFAULT_PROFILE_DIR = get_default_profile_dir()
 
 DEFAULT_CDP_DATA_DIR = os.path.expanduser("~/.boss-zhipin-scraper/chrome-profile")
-DEFAULT_RESULT_DIR = os.path.expanduser("~/.boss-zhipin-scraper/job-result")
+
+
+def _resolve_result_dir():
+    """结果目录：优先 $BOSS_RESULT_DIR，默认 ~/.boss-zhipin-scraper/job-result。"""
+    configured = os.environ.get("BOSS_RESULT_DIR")
+    if configured:
+        return os.path.expanduser(configured)
+    return os.path.expanduser("~/.boss-zhipin-scraper/job-result")
+
+
+DEFAULT_RESULT_DIR = _resolve_result_dir()
 DEFAULT_CITY_INPUT = "上海"
 LOGIN_PROBE_QUERY = "Java"
 LOGIN_PROBE_CITY = "101020100"

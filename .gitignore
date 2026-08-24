@@ -30,6 +30,7 @@ htmlcov/
 
 # Project-generated local files
 docs/
+job-result/
 
 # Local skill tooling config (baoyu-image-gen etc.)
 .baoyu-skills/
