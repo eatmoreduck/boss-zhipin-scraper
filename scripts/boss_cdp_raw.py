@@ -64,10 +64,33 @@ CITY_GROUP_URL = "https://www.zhipin.com/wapi/zpCommon/data/cityGroup.json"
 MAX_PAGES = 10          # 单次最大页数
 MAX_API_REQUESTS = 500  # 单次最大 API 请求数
 
+
+MACOS_BROWSER_CANDIDATES = (
+    (
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "~/Library/Application Support/Google/Chrome",
+    ),
+    (
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "~/Library/Application Support/Chromium",
+    ),
+)
+
+
+def get_default_macos_browser_paths():
+    """Return matching executable/profile paths for an installed macOS browser."""
+    for executable, profile_dir in MACOS_BROWSER_CANDIDATES:
+        if os.path.exists(executable):
+            return executable, os.path.expanduser(profile_dir)
+
+    executable, profile_dir = MACOS_BROWSER_CANDIDATES[0]
+    return executable, os.path.expanduser(profile_dir)
+
+
 def get_default_chrome_path():
     system = platform.system()
     if system == "Darwin":
-        return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        return get_default_macos_browser_paths()[0]
     if system == "Windows":
         candidates = []
         local_app_data = os.environ.get("LOCALAPPDATA")
@@ -97,7 +120,7 @@ def get_default_chrome_path():
 def get_default_profile_dir():
     system = platform.system()
     if system == "Darwin":
-        return os.path.expanduser("~/Library/Application Support/Google/Chrome")
+        return get_default_macos_browser_paths()[1]
     if system == "Windows":
         base = os.environ.get("LOCALAPPDATA")
         if not base:
