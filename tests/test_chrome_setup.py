@@ -1170,6 +1170,34 @@ class ChromeSetupTests(unittest.TestCase):
                 r"C:\Users\leon\AppData\Local\Google\Chrome\User Data",
             )
 
+    def test_macos_defaults_to_chromium_when_google_chrome_is_missing(self):
+        module = load_module()
+        chromium_path = "/Applications/Chromium.app/Contents/MacOS/Chromium"
+
+        with mock.patch.object(module.platform, "system", return_value="Darwin"), \
+                mock.patch.object(
+                    module.os.path,
+                    "exists",
+                    side_effect=lambda path: path == chromium_path,
+                ):
+            self.assertEqual(module.get_default_chrome_path(), chromium_path)
+            self.assertEqual(
+                module.get_default_profile_dir(),
+                module.os.path.expanduser("~/Library/Application Support/Chromium"),
+            )
+
+    def test_macos_prefers_google_chrome_when_both_browsers_are_installed(self):
+        module = load_module()
+        chrome_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+        with mock.patch.object(module.platform, "system", return_value="Darwin"), \
+                mock.patch.object(module.os.path, "exists", return_value=True):
+            self.assertEqual(module.get_default_chrome_path(), chrome_path)
+            self.assertEqual(
+                module.get_default_profile_dir(),
+                module.os.path.expanduser("~/Library/Application Support/Google/Chrome"),
+            )
+
     def test_windows_process_parsing_matches_user_data_dir_and_cdp_port(self):
         module = load_module()
         ps_json = json.dumps([{

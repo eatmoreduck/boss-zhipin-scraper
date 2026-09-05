@@ -54,9 +54,9 @@ python3 scripts/job_summary.py
 - 详情页 JD 抓取 + 技能分析
 - 抓取后聚合摘要 + 可复制提示词
 - 增量写入（异常退出不丢数据）
-- 一键环境检查 + 持久隔离 Chrome CDP profile
+- 一键环境检查 + 持久隔离 Chrome/Chromium CDP profile
 - 多维筛选（规模、融资、薪资、经验、学历、行业）
-- macOS + Linux 支持；Windows 已通过单元测试与基础 CLI 验证（GBK 控制台崩溃已修复），真实抓取链路仍欢迎反馈
+- macOS + Linux 支持；macOS 会自动探测 Google Chrome 或 Chromium；Windows 已通过单元测试与基础 CLI 验证（GBK 控制台崩溃已修复），真实抓取链路仍欢迎反馈
 
 <details>
 <summary>🔍 为什么不选 Selenium / Playwright 类爬虫？</summary>
@@ -136,6 +136,7 @@ pip install -r requirements.txt
 
 # 2. 启动 Chrome CDP
 python3 scripts/boss_cdp_raw.py --setup-chrome
+# macOS 会自动选择已安装的 Google Chrome 或 /Applications/Chromium.app
 # 首次使用也不会复制主 Chrome 登录态；请在弹出的 BOSS 专用浏览器中登录 zhipin.com
 # setup 会等待登录完成，并确认接口能返回明文薪资
 
@@ -261,7 +262,11 @@ boss-zhipin-scraper/
 python3 scripts/boss_cdp_raw.py --setup-chrome --copy-login-state
 ```
 
-`--copy-login-state` 每次运行都会覆盖隔离 profile 内对应的 Cookie 相关文件；日常启动不要加这个参数。它只复制 `Local State` 和 `Default/Cookies*`、`Default/Network/Cookies*` 这类 Cookie 数据库相关文件，不复制密码库、历史记录、扩展或完整 profile。需要清空专用浏览器登录态时使用：
+`--copy-login-state` 每次运行都会覆盖隔离 profile 内对应的 Cookie 相关文件；日常启动不要加这个参数。它只复制 `Local State` 和 `Default/Cookies*`、`Default/Network/Cookies*` 这类 Cookie 数据库相关文件，不复制密码库、历史记录、扩展或完整 profile。
+
+macOS 上的导入源会与自动选中的浏览器保持一致：Google Chrome 使用 `~/Library/Application Support/Google/Chrome`，Chromium 使用 `~/Library/Application Support/Chromium`。
+
+需要清空专用浏览器登录态时使用：
 
 ```bash
 python3 scripts/boss_cdp_raw.py --setup-chrome --reset-chrome-profile
