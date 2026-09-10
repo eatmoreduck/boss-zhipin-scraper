@@ -1,0 +1,68 @@
+name: Bug 报告
+description: 报告一个缺陷或问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你报告 Bug！请填写下面的信息帮助我们定位问题。
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 简要描述遇到的问题
+      placeholder: 例如：运行抓取时报错 "ConnectionError..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 如何复现这个问题？
+      placeholder: |
+        1. 运行命令 `python3 scripts/boss_cdp_raw.py --keyword "Java" --pages 5`
+        2. 等待约 10 秒
+        3. 出现错误...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 你期望应该发生什么？
+      placeholder: 例如：应该正常抓取职位列表
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 实际发生了什么？如果有错误信息请完整粘贴
+      placeholder: 请粘贴完整的错误堆栈或截图
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境信息
+      description: 你的运行环境
+      value: |
+        - 操作系统：[例如 macOS 13.0, Windows 11, Ubuntu 22.04]
+        - Python 版本：[运行 `python3 --version`]
+        - 项目版本：[运行 `python3 scripts/boss_cdp_raw.py --version`]
+        - Chrome 版本：[例如 Chrome 120.0.6099.109]
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: 补充信息
+      description: 其他有助于定位问题的信息（可选）
+      placeholder: 例如：只在特定城市或关键词下出现、之前工作正常但最近开始报错等
