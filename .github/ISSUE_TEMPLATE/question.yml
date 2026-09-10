@@ -1,0 +1,38 @@
+name: 提问求助
+description: 使用中的疑问或需要帮助
+title: "[Question] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        有问题？先看看 [README](../../README.md) 和 [常见问题](../../README.md#常见问题) 是否已有答案。
+
+  - type: textarea
+    id: question
+    attributes:
+      label: 问题描述
+      description: 你想问什么？
+      placeholder: 例如：如何只抓取特定公司规模的岗位？
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: 你尝试过什么（可选）
+      description: 你已经尝试了哪些方法？
+      placeholder: |
+        例如：
+        - 看了 README 但没找到相关说明
+        - 试过 --scale 参数但不知道代码是什么
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境信息（如果相关）
+      description: 如果问题与环境有关，请提供
+      value: |
+        - 操作系统：[例如 macOS, Windows, Linux]
+        - Python 版本：[运行 `python3 --version`]
+        - 项目版本：[运行 `python3 scripts/boss_cdp_raw.py --version`]
