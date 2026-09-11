@@ -54,9 +54,9 @@ Right after scraping you get: salary ranges, experience requirements, top skill 
 - Detail-page JD scraping + skill analysis
 - Aggregated summary + copy-paste prompt after scraping
 - Incremental writes (no data loss on crash)
-- One-shot environment check + persistent isolated Chrome CDP profile
+- One-shot environment check + persistent isolated Chrome/Chromium CDP profile
 - Multi-dimension filters (scale, funding, salary, experience, degree, industry)
-- macOS + Linux + Windows support; Windows is verified by unit tests and basic CLI checks, and supports Chrome or Microsoft Edge CDP; real scraping flows still welcome feedback
+- macOS + Linux + Windows support; macOS automatically detects Google Chrome or Chromium; Windows is verified by unit tests and basic CLI checks (GBK console crash fixed) and supports Chrome or Microsoft Edge CDP; real scraping flows still welcome feedback
 
 <details>
 <summary>🔍 Why not a Selenium / Playwright crawler?</summary>
@@ -136,6 +136,7 @@ pip install -r requirements.txt
 
 # 2. Start Chrome CDP (or use --setup-edge)
 python3 scripts/boss_cdp_raw.py --setup-chrome
+# macOS automatically selects an installed Google Chrome or /Applications/Chromium.app
 # First run won't copy your main Chrome session; log in to zhipin.com in the dedicated BOSS browser that pops up
 # setup waits for login to finish and confirms the API returns plaintext salaries
 
@@ -265,7 +266,11 @@ If you really need to import the BOSS session from your main Chrome, run explici
 python3 scripts/boss_cdp_raw.py --setup-chrome --copy-login-state
 ```
 
-`--copy-login-state` overwrites the corresponding cookie-related files inside the isolated profile on every run; do not pass this for daily launches. It only copies `Local State` and `Default/Cookies*`, `Default/Network/Cookies*`-style cookie database files — not password stores, history, extensions, or a full profile. To wipe the dedicated browser's login state:
+`--copy-login-state` overwrites the corresponding cookie-related files inside the isolated profile on every run; do not pass this for daily launches. It only copies `Local State` and `Default/Cookies*`, `Default/Network/Cookies*`-style cookie database files — not password stores, history, extensions, or a full profile.
+
+On macOS, the import source matches the browser selected automatically: Google Chrome uses `~/Library/Application Support/Google/Chrome`, while Chromium uses `~/Library/Application Support/Chromium`.
+
+To wipe the dedicated browser's login state:
 
 ```bash
 python3 scripts/boss_cdp_raw.py --setup-chrome --reset-chrome-profile
