@@ -170,8 +170,8 @@ python3 scripts/job_summary.py --top 15
 | `--smoke-test` | Run one real Chrome/CDP BOSS search API smoke test, writes no result files |
 | `--setup-chrome` | One-shot launch of Chrome CDP (persistent isolated profile) |
 | `--setup-edge` | One-shot launch of Microsoft Edge CDP (persistent isolated profile) |
-| `--browser` | Select `chrome` or `edge` for `--setup-chrome`; defaults to `chrome` for compatibility |
-| `--copy-login-state` | Manually import the main Chrome's Local State + cookie-related files into the isolated profile (never copied by default, on first run, or on repeated runs) |
+| `--browser` | Select `chrome` or `edge` for `--setup-chrome` (defaults to `chrome`); `--setup-edge` always launches Edge — an explicit `--browser chrome` yields to `--setup-edge` with a notice |
+| `--copy-login-state` | Manually import the main browser's Local State + cookie-related files into the isolated profile (main Chrome for `--setup-chrome`, main Edge for `--setup-edge`; never copied by default, on first run, or on repeated runs) |
 | `--reset-chrome-profile` | Rebuild the dedicated BOSS Chrome profile; clears the login state inside this dedicated browser |
 | `--no-wait-login` | With `--setup-chrome`, do not wait for login to finish |
 | `--login-timeout` | Seconds to wait for login under `--setup-chrome` (default 300) |

@@ -140,7 +140,6 @@ pip install -r requirements.txt
 python3 scripts/boss_cdp_raw.py --setup-chrome
 # 首次使用也不会复制主 Chrome 登录态；请在弹出的 BOSS 专用浏览器中登录 zhipin.com
 # setup 会等待登录完成，并确认接口能返回明文薪资
-# setup 会等待登录完成，并确认接口能返回明文薪资
 
 # 3. 检查环境
 python3 scripts/boss_cdp_raw.py --check
@@ -173,8 +172,8 @@ python3 scripts/job_summary.py --top 15
 | `--smoke-test` | 用真实 Chrome/CDP 跑一次 BOSS 搜索 API smoke test，不写结果文件 |
 | `--setup-chrome` | 一键启动 Chrome CDP（持久隔离 profile） |
 | `--setup-edge` | 一键启动 Microsoft Edge CDP（持久隔离 profile） |
-| `--browser` | 配合 `--setup-chrome` 选择 `chrome` 或 `edge`；默认 `chrome`，保留原命令兼容性 |
-| `--copy-login-state` | 手动导入主 Chrome 的 Local State + Cookie 相关文件到隔离 profile（默认、首次启动、重复启动都不复制） |
+| `--browser` | 配合 `--setup-chrome` 选择 `chrome` 或 `edge`（默认 `chrome`）；`--setup-edge` 固定 Edge，显式传 `--browser chrome` 会以 `--setup-edge` 为准并提示 |
+| `--copy-login-state` | 手动导入主浏览器（`--setup-chrome` 取主 Chrome、`--setup-edge` 取主 Edge）的 Local State + Cookie 相关文件到隔离 profile（默认、首次启动、重复启动都不复制） |
 | `--reset-chrome-profile` | 重建 BOSS 专用 Chrome profile，会清除此专用浏览器内的登录态 |
 | `--no-wait-login` | `--setup-chrome` 启动后不等待登录完成 |
 | `--login-timeout` | `--setup-chrome` 等待登录完成的秒数（默认 300） |

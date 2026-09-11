@@ -71,7 +71,7 @@ python3 "$SCRIPT_PATH" --check --cdp-port 9222
 - **依赖缺失** → 先装依赖（见上方依赖安装），再重新 --check
 - **未登录** → 告诉用户打开 Chrome 登录 zhipin.com，然后重新 --check
 
-### 第 2 步：启动 Chrome CDP（仅在 --check CDP 不通时）
+### 第 2 步：启动专用浏览器 CDP（仅在 --check CDP 不通时）
 
 ```bash
 python3 "$SCRIPT_PATH" --setup-chrome --cdp-port 9222
@@ -87,13 +87,19 @@ python3 "$SCRIPT_PATH" --setup-chrome --cdp-port 9222
 
 默认不复制主 Chrome 的 Cookie、密码、历史记录或扩展；首次启动和后续重复启动都只是创建或复用该专用 profile。首次使用时告诉用户：请在弹出的 BOSS 专用 Chrome 浏览器中访问 zhipin.com 并登录。脚本会等待登录完成并确认接口能返回明文薪资。该专用 profile 是持久目录，机器重启后登录态仍保留，重复运行 `--setup-chrome` 不会清空它。
 
-仅当用户明确要求从主 Chrome 手动导入 BOSS 登录态时，可使用：
+仅装 Microsoft Edge（未装 Chrome）的机器，可改用 Edge 启动（与 `--setup-chrome` 共用同一隔离 profile）：
+
+```bash
+python3 "$SCRIPT_PATH" --setup-edge --cdp-port 9222
+```
+
+仅当用户明确要求从主浏览器手动导入 BOSS 登录态时，可使用：
 
 ```bash
 python3 "$SCRIPT_PATH" --setup-chrome --copy-login-state --cdp-port 9222
 ```
 
-`--copy-login-state` 每次运行都会覆盖隔离 profile 内对应的 Cookie 相关文件；日常启动不要加这个参数。它只复制 `Local State` 和 `Default/Cookies*`、`Default/Network/Cookies*` 这类 Cookie 数据库相关文件，不复制密码库或完整 profile。不要默认使用该参数，也不要告诉用户首次启动会自动导入主 Chrome 登录态。
+`--copy-login-state` 在 `--setup-chrome` 下从主 Chrome 导入、在 `--setup-edge` 下从主 Edge 导入，每次运行都会覆盖隔离 profile 内对应的 Cookie 相关文件；日常启动不要加这个参数。它只复制 `Local State` 和 `Default/Cookies*`、`Default/Network/Cookies*` 这类 Cookie 数据库相关文件，不复制密码库或完整 profile。不要默认使用该参数，也不要告诉用户首次启动会自动导入主浏览器登录态。
 
 等用户确认后，重新运行 `--check` 验证。
 
@@ -160,11 +166,14 @@ python3 "$SUMMARY_PATH" \
 | `--merge FILE` | - | 合并已有 JSON（按 job_id 去重） |
 | `--cdp-port` | 9222 | CDP 端口 |
 | `--setup-chrome` | 关闭 | 一键启动 Chrome CDP（持久隔离 profile） |
-| `--copy-login-state` | 关闭 | 手动导入主 Chrome 的 Local State + Cookie 相关文件到隔离 profile；默认、首次启动、重复启动都不复制 |
+| `--setup-edge` | 关闭 | 一键启动 Microsoft Edge CDP（与 `--setup-chrome` 共用隔离 profile） |
+| `--browser` | chrome | 搭配 `--setup-chrome` 选择浏览器（chrome/edge）；与 `--setup-edge` 显式冲突时以 `--setup-edge` 为准并提示 |
+| `--copy-login-state` | 关闭 | 手动导入主浏览器（`--setup-chrome` 取主 Chrome、`--setup-edge` 取主 Edge）的 Local State + Cookie 相关文件到隔离 profile；默认、首次启动、重复启动都不复制 |
 | `--reset-chrome-profile` | 关闭 | 重建 BOSS 专用 profile，会清除此专用浏览器登录态 |
 | `--no-wait-login` | 关闭 | `--setup-chrome` 启动后不等待 BOSS 登录完成 |
 | `--login-timeout` | 300 | `--setup-chrome` 等待登录完成的秒数 |
 | `--stop-chrome` | 关闭 | 关闭 BOSS 专用 CDP Chrome（按隔离 profile 精准匹配，不碰主 Chrome） |
+| `--stop-edge` | 关闭 | 关闭 BOSS 专用浏览器 CDP（与 `--stop-chrome` 共用隔离 profile） |
 | `--close-chrome` | 关闭 | 抓取正常结束后自动关闭专用 Chrome（默认不关；异常退出不触发，保留登录态） |
 | `--check` | 关闭 | 环境检查 |
 | `--smoke-test` | 关闭 | 真实 Chrome/CDP 搜索 API smoke test，不写结果文件 |
