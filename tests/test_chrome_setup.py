@@ -1002,6 +1002,26 @@ class ChromeSetupTests(unittest.TestCase):
         # 风控在第一页就终止，不应继续滚动翻页
         self.assertEqual(module._request_counter, 1)
 
+    def test_scrape_list_survives_cdp_timeout_on_enable(self):
+        """capture.enable 抛 CDP TimeoutError 时优雅停止并保留已抓数据，不裸崩（#78）。"""
+        module = load_module()
+        cdp = FakeCaptureCDP()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = str(pathlib.Path(tmp) / "jobs.json")
+            with mock.patch.object(
+                module.NetworkJoblistCapture,
+                "enable",
+                side_effect=TimeoutError(
+                    "CDP send(Network.enable) 在 1000 条消息内未找到匹配响应"
+                ),
+            ):
+                result = self._run_scrape_list(module, cdp, output_path, pages=2)
+
+        self.assertEqual(result["total"], 0)
+        # finally 清理正常执行，不悬空连接
+        self.assertEqual(cdp.sent_methods.count("Target.closeTarget"), 1)
+
     def test_wait_for_login_rotates_targets_and_backs_off(self):
         module = load_module()
         cdp = mock.Mock()
@@ -1038,6 +1058,48 @@ class ChromeSetupTests(unittest.TestCase):
         )
         sleep.assert_called_once()
         self.assertAlmostEqual(sleep.call_args.args[0], 3, delta=0.1)
+
+    def test_wait_for_login_retries_on_cdp_timeout(self):
+        """CDP 传输层 TimeoutError 按瞬态错误重试，不裸崩（#78）。"""
+        module = load_module()
+        cdp = mock.Mock()
+        results = [
+            TimeoutError("CDP send(Network.enable) 在 1000 条消息内未找到匹配响应"),
+            module.LoginProbeResult(module.LoginProbeStatus.AVAILABLE),
+        ]
+        with mock.patch.object(module, "CDPSession", return_value=cdp), \
+                mock.patch.object(
+                    module,
+                    "create_page_session",
+                    return_value=("login-target", "login-session"),
+                ), \
+                mock.patch.object(module, "probe_login_state", side_effect=results) as probe, \
+                mock.patch.object(module.time, "sleep"):
+            self.assertTrue(module.wait_for_login(cdp_port=9333, timeout=10, interval=3))
+
+        self.assertEqual(probe.call_count, 2)
+
+    def test_wait_for_login_stops_after_too_many_cdp_timeouts(self):
+        """连续 CDP 超时计入 transient_errors，超过上限后停止探测。"""
+        module = load_module()
+        cdp = mock.Mock()
+        with mock.patch.object(module, "CDPSession", return_value=cdp), \
+                mock.patch.object(
+                    module,
+                    "create_page_session",
+                    return_value=("login-target", "login-session"),
+                ), \
+                mock.patch.object(
+                    module,
+                    "probe_login_state",
+                    side_effect=TimeoutError("CDP 传输层异常"),
+                ) as probe, \
+                mock.patch.object(module.time, "sleep"):
+            self.assertFalse(module.wait_for_login(cdp_port=9333, timeout=10, interval=3))
+
+        self.assertEqual(
+            probe.call_count, module.LOGIN_PROBE_MAX_TRANSIENT_ERRORS + 1
+        )
 
     def test_wait_for_login_stops_immediately_when_restricted(self):
         module = load_module()

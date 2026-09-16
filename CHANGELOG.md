@@ -17,6 +17,7 @@
 - 城市码表外置为 `data/city_codes.json`（全量 300+ 城市，覆盖一二三四五线），新增 `--list-cities [关键词]` 命令查看支持的城市；`resolve_city` 查询链改为「本地静态码表 → 运行时拉 BOSS 接口 → 9 位裸码兜底」。城市码表打进 wheel，`pip install` 用户也可用。（#24）
 
 ### 修复
+- `--setup-chrome` 登录等待遇 CDP 传输层超时不再裸崩（#78）：`TimeoutError` 是 `OSError` 子类而非 `RuntimeError` 子类，`wait_for_login` 探测循环原只捕 `RuntimeError`，事件洪流冲掉命令响应时整个命令带着 traceback 退出、已写好的瞬态重试（`LOGIN_PROBE_MAX_TRANSIENT_ERRORS`）无法运行。现收敛共享元组 `CDP_TRANSIENT_EXCEPTIONS`（`(TimeoutError, websocket.WebSocketException)`），`wait_for_login` 捕获后按瞬态错误计入重试计数，`scrape_list` 外层同步补齐；同时把 `capture.enable()` 移入 `scrape_list` 的 try 块（原先位于 try 外，任何异常都会裸崩且跳过 finally 清理）。`--check` / `--smoke-test` 行为不变（原本已正确）
 - Windows 兼容：`main()` 入口将 stdout/stderr 重配为 UTF-8，修复 Windows GBK 控制台遇到 emoji（✅❌⚠️ 等）输出直接 `UnicodeEncodeError` 崩溃的问题（实测此前 73 个单测中 8 个因此失败）
 - JSON 落盘改为原子写入（临时文件 + `os.replace`）：进程中断不再留下半截 JSON 覆盖旧数据；`flush_jobs`、详情页写入与 `--merge` 详情落盘统一走 `_atomic_write_json`
 - `--check` 的 CDP 连通检查不再把任意 CDP 服务误报为「Chrome」，改为输出实际服务标识

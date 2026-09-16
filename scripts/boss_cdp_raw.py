@@ -193,6 +193,11 @@ LOGIN_PROBE_TARGETS = (
 )
 LOGIN_PROBE_MAX_INTERVAL = 15
 LOGIN_PROBE_MAX_TRANSIENT_ERRORS = 2
+# CDP 传输层瞬态异常（#78）：TimeoutError 是 OSError 的子类而非 RuntimeError 的子类，
+# 探测/抓取循环若只捕 RuntimeError，事件洪流冲掉命令响应时会整条命令裸崩。
+# websocket 模块为惰性加载，WebSocketException 在依赖加载成功后补入
+# （见 require_runtime_dependencies），CDP 入口均先过该检查，元组在使用前必然就绪。
+CDP_TRANSIENT_EXCEPTIONS = (TimeoutError,)
 # 被动捕获页面自身首次搜索响应的等待上限：导航 + SPA 发请求通常 <8s，留足余量
 PROBE_CAPTURE_TIMEOUT = 25
 LOGIN_RESTRICTED_CODES = {31, 37}
@@ -226,7 +231,7 @@ def default_output_path(kind):
 
 
 def require_runtime_dependencies(*names):
-    global requests, websocket
+    global requests, websocket, CDP_TRANSIENT_EXCEPTIONS
 
     missing = []
     if "requests" in names and requests is None:
@@ -247,6 +252,9 @@ def require_runtime_dependencies(*names):
         print(f"  uv add {' '.join(missing)}")
         print(f"  pip install {' '.join(missing)}")
         return False
+    # 依赖可用后补全 CDP 瞬态异常元组（WebSocketException 来自 websocket-client）
+    if websocket is not None:
+        CDP_TRANSIENT_EXCEPTIONS = (TimeoutError, websocket.WebSocketException)
     return True
 
 
@@ -1219,6 +1227,14 @@ def wait_for_login(cdp_port=DEFAULT_CDP_PORT, timeout=DEFAULT_LOGIN_TIMEOUT, int
             query, city_code = LOGIN_PROBE_TARGETS[attempt % len(LOGIN_PROBE_TARGETS)]
             try:
                 result = probe_login_state(cdp, sid, query=query, city_code=city_code)
+            except CDP_TRANSIENT_EXCEPTIONS as e:
+                # CDP 传输层瞬态异常（事件洪流冲掉响应、连接打嗝）按可重试错误处理，
+                # 计入 transient_errors 走既有退避重试，不裸崩（#78）
+                result = LoginProbeResult(
+                    LoginProbeStatus.RESPONSE_ERROR,
+                    message=f"CDP 传输层异常: {e}",
+                    retryable=True,
+                )
             except RuntimeError as e:
                 print(f"\n❌ {e}")
                 return False
@@ -1557,8 +1573,6 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
     print()
 
     tid, sid = create_page_session(cdp)
-    capture = NetworkJoblistCapture(cdp, sid)
-    capture.enable()
 
     def human_scroll(cdp, sid, to_bottom=False):
         """模拟人类滚动: 随机次数、随机距离、随机停顿，偶尔回滚一点。
@@ -1614,6 +1628,10 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
         )
 
     try:
+        # capture 的创建与 enable 放进 try 内：CDP 传输层异常走统一的优雅退出，
+        # 原先 enable 位于 try 外，任何异常都会裸崩且跳过 finally 清理（#78）
+        capture = NetworkJoblistCapture(cdp, sid)
+        capture.enable()
         for pg in range(1, max_pages + 1):
             print(f"--- [{pg}/{max_pages} 页, {len(all_jobs)} 条已抓] ---")
 
@@ -1710,6 +1728,9 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
 
     except KeyboardInterrupt:
         print("\n中断")
+    except CDP_TRANSIENT_EXCEPTIONS as e:
+        # CDP 传输层瞬态异常：优雅停止并保留已抓数据（每页已增量写盘），不裸崩（#78）
+        print(f"\n⚠️ CDP 连接异常，已停止抓取: {e}")
     except RuntimeError as e:
         print(f"\n⚠️ {e}")
     finally:
