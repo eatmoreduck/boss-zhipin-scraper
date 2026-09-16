@@ -112,6 +112,14 @@ hermes skills install https://raw.githubusercontent.com/eatmoreduck/boss-zhipin-
 
 > Note: this depends on the hermes process being able to reach GitHub directly. If you hit a timeout or connection failure, use Option 1 or 2.
 
+### Option 4: One-line install via skills.sh (Claude Code and other Agent Skills-compatible agents)
+
+```bash
+npx skills add eatmoreduck/boss-zhipin-scraper
+```
+
+The skill is listed on [skills.sh](https://skills.sh). Any agent that supports the Agent Skills format (Claude Code, Codex, Gemini CLI, Cursor, etc.) can install it with this one command — SKILL.md, the scripts, and the city code table ship with the skill. Pick the target agent when the CLI asks.
+
 ### Verify the installation
 
 ```bash

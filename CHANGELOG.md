@@ -3,6 +3,7 @@
 ## 未发布
 
 ### 变更
+- README 双语新增 skills.sh 一键安装方式：`npx skills add eatmoreduck/boss-zhipin-scraper`。skills.sh 已收录本技能，Agent Skills 兼容 agent（Claude Code、Codex、Gemini CLI、Cursor 等）可一条命令安装技能形态（SKILL.md、脚本、城市码表随技能分发）
 - 新增 Issue 标签约定（#58）：`CONTRIBUTING.md` 增加标签语义表与打标原则（`wontfix`/`invalid` 关闭须留理由），`AGENTS.md` 补 issue 分诊打标指引；开放 issue 已完成首轮打标
 - 文档同步被动捕获架构（#56）：`AGENTS.md` 重写架构关键点（列表=Network 被动捕获、焦点仿真进 CDP 不变量、BOSS 页面行为事实），新增两条硬规则（动抓取链路必须真机 e2e；合规红线：只被动捕获、禁止指纹伪造/验证码绕过/代理轮换），补合并惯例与 spike 脚本约定；README 双语登录探测段落同步为被动捕获表述
 - 列表抓取与登录探测全面改为**被动捕获**（#53/#30）：不再向页面注入同步 XHR（该请求模式会被 BOSS 风控识别为 code 37），改为导航真实搜索页后通过 CDP `Network` 域旁听页面自身发出的 `joblist.json` 响应；翻页改为滚动触发页面自身的无限滚动加载（每页 15 条，`hasMore=false` 时提前结束）。字段映射逻辑从注入 JS 模板迁至 Python（`map_api_job`）
