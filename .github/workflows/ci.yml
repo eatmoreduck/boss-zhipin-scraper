@@ -1,0 +1,50 @@
+# CI：PR 与 master 自动跑语法自检 + 全量单测
+# 仓库为 PUBLIC：Actions 标准 runner 免费，跑 Python 3.10（下限）+ 3.13 双档矩阵。
+# 测试全 mock（见 AGENTS.md），无需 Chrome/联网，ubuntu 单平台即可覆盖。
+# master 的停线由分支保护（required status check）强制，不依赖脚本门禁。
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+# 同一分支的新 run 取消同 ref 的旧 run
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    # 硬超时：mock 单测实测秒级，防挂死构建占着 runner
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # 注：setup-uv 自 v8 起不再发布 @v8 这类 major tag，须 pin 完整版本号
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.1.0
+        with:
+          # 由 uv 安装矩阵指定的 Python（3.10 runner 预装缺失时自动下载）
+          python-version: ${{ matrix.python-version }}
+
+      - name: Sync dependencies
+        # --locked：uv.lock 与 pyproject.toml 不一致时直接失败
+        run: uv sync --locked
+
+      - name: 语法自检（py_compile）
+        # AGENTS.md 指定的自检命令，扩展到两个入口脚本
+        run: uv run python -m py_compile scripts/boss_cdp_raw.py scripts/job_summary.py
+
+      - name: 全量单测（全 mock，无需 Chrome/联网）
+        run: uv run python -m unittest tests.test_chrome_setup tests.test_job_summary -v
