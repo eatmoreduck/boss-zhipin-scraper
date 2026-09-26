@@ -64,6 +64,10 @@ chore: 杂项         例: chore: 升级依赖
 4. 提交 PR，描述里写清楚：改了什么、为什么改、怎么测试的。
 5. 等待 review，有反馈就改，保持同一个 PR（不要关掉重开）。
 
+### AI Review 助手
+
+仓库启用了 [CodeRabbit](https://www.coderabbit.ai) 作为自动化 review 助手：PR 创建后会自动生成变更摘要和逐行评审意见；在 PR 评论中 `@coderabbitai` 可以让它重新生成摘要、解答疑问或按建议生成修改。它只是辅助手段，合并与否仍以人工 review 结论为准。
+
 ## Issue 标签约定
 
 处理 issue 时按下面的约定打标签，方便筛选和维护：
