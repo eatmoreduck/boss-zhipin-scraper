@@ -120,6 +120,14 @@ npx skills add eatmoreduck/boss-zhipin-scraper
 
 The skill is listed on [skills.sh](https://skills.sh). Any agent that supports the Agent Skills format (Claude Code, Codex, Gemini CLI, Cursor, etc.) can install it with this one command — SKILL.md, the scripts, and the city code table ship with the skill. Pick the target agent when the CLI asks.
 
+### Option 5: ClawHub install (OpenClaw / clawhub CLI)
+
+The skill is published on [ClawHub](https://clawhub.ai), the skill registry of the OpenClaw ecosystem. OpenClaw users can install it with one command:
+
+```bash
+npx clawhub@latest install @eatmoreduck/boss-zhipin-scraper
+```
+
 ### Verify the installation
 
 ```bash
