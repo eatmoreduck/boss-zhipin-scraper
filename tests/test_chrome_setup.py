@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime
 from unittest import mock
 
 
@@ -1956,6 +1957,85 @@ class ProjectScopeTests(unittest.TestCase):
             "enable-llm",
         ):
             self.assertNotIn(forbidden, combined)
+
+
+class IsNewDiffTests(unittest.TestCase):
+    """跨轮新增标记(#88):基准文件选取规则与 is_new 比对逻辑。"""
+
+    def _write_result(self, dir_path, name, keyword, city, job_ids):
+        payload = {
+            "keyword": keyword,
+            "city": city,
+            "jobs": [{"job_id": jid, "title": f"岗位{jid}"} for jid in job_ids],
+        }
+        path = os.path.join(dir_path, name)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        return path
+
+    def test_parse_result_file_time_accepts_result_names_only(self):
+        module = load_module()
+
+        self.assertEqual(
+            module.parse_result_file_time("boss_jobs_20260916_1606.json"),
+            datetime(2026, 9, 16, 16, 6),
+        )
+        self.assertIsNone(module.parse_result_file_time("boss_details_20260916_1606.json"))
+        self.assertIsNone(module.parse_result_file_time("boss_jobs_bad.json"))
+        self.assertIsNone(module.parse_result_file_time("boss_jobs_20260916_1606.csv"))
+        self.assertIsNone(module.parse_result_file_time("boss_jobs_20261399_9999.json"))
+
+    def test_find_diff_base_excludes_same_day_files(self):
+        """同一天的多份抓取折叠为一轮,今天的文件互不当基准(#88)。"""
+        module = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_result(tmp, "boss_jobs_20260928_2011.json", "Java", "上海", ["a"])
+            base = module.find_diff_base(
+                tmp, "Java", "上海", now=datetime(2026, 9, 28, 20, 30)
+            )
+
+        self.assertIsNone(base)
+
+    def test_find_diff_base_filters_keyword_city_and_picks_latest(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_result(tmp, "boss_jobs_20260910_0900.json", "Java", "上海", ["a"])
+            self._write_result(tmp, "boss_jobs_20260916_1606.json", "Java", "上海", ["b"])
+            self._write_result(tmp, "boss_jobs_20260918_1000.json", "Python", "上海", ["c"])
+            self._write_result(tmp, "boss_jobs_20260919_1000.json", "Java", "北京", ["d"])
+            base = module.find_diff_base(
+                tmp, "Java", "上海", now=datetime(2026, 9, 28, 20, 30)
+            )
+
+        self.assertIsNotNone(base)
+        self.assertTrue(base.endswith("boss_jobs_20260916_1606.json"))
+
+    def test_find_diff_base_skips_corrupted_files_and_missing_dir(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "boss_jobs_20260910_0900.json"), "w") as f:
+                f.write("{broken json")
+            self._write_result(tmp, "boss_jobs_20260912_0900.json", "Java", "上海", ["a"])
+            base = module.find_diff_base(
+                tmp, "Java", "上海", now=datetime(2026, 9, 28, 20, 30)
+            )
+
+        self.assertTrue(base and base.endswith("boss_jobs_20260912_0900.json"))
+        self.assertIsNone(module.find_diff_base(
+            os.path.join(tmp, "not-exist"), "Java", "上海"
+        ))
+
+    def test_load_base_ids_reads_ids_and_tolerates_corruption(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_result(tmp, "boss_jobs_20260916_1606.json", "Java", "上海", ["a", "b"])
+            self.assertEqual(module.load_base_ids(path), {"a", "b"})
+
+            broken = os.path.join(tmp, "broken.json")
+            with open(broken, "w") as f:
+                f.write("{oops")
+            self.assertEqual(module.load_base_ids(broken), set())
+            self.assertEqual(module.load_base_ids(os.path.join(tmp, "nope.json")), set())
 
 
 if __name__ == "__main__":

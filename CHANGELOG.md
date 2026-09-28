@@ -12,6 +12,8 @@
 - 删除死代码：`FETCH_API_JS_TEMPLATE`、`build_login_probe_url`、`parse_api_jobs_eval_value`、`should_use_dom_fallback`；`CDPSession` 新增事件缓冲与 `drain_events`；测试从 92 增至 96 个
 
 ### 新增
+- 抓取结果跨轮对比，标记本次新增岗位（#88）：输出 JSON/CSV 中每条岗位新增 `is_new` 布尔字段（终端列表同步以 🆕 标记），表示「该岗位不在历史基准中」。基准自动选取规则：同关键词+同城市、**文件名日期早于本轮**的最近一份结果（同一天多轮抓取折叠为一轮，避免和几分钟前的自己 diff 出翻页抖动噪音）；找不到同关键词历史基准时全体视为新增并在终端明示；`--diff-base <path>` 可显式指定基准文件。纯本地后处理，零额外请求。（#50 反馈的「搜索结果重复」由此缓解）
+
 - macOS 的 `--setup-chrome` 新增 Chromium 自动探测：未安装 Google Chrome 但存在 `/Applications/Chromium.app` 时，自动启动 Chromium；`--copy-login-state` 也会使用与所选浏览器匹配的 profile 目录。（#46）
 - 详情/列表结果新增独立字段 `boss_active_status`（如「今日活跃」「在线」）：列表兼容 `activeTimeDesc` 与 `bossOnline`（仅在线时映射为「在线」）；详情页从招聘者卡片解析更细粒度状态并优先保留；JD 正文仍剔除该行，不混入描述
 - 新增 `--stop-chrome` 命令：抓取/分析完成后关闭 BOSS 专用 CDP Chrome（按 user-data-dir 精准匹配隔离 profile，不碰主 Chrome）；抓取命令新增 `--close-chrome` 选项，正常结束后自动收尾（默认关闭，异常退出不触发以保留登录态）。复用已有 `stop_cdp_chrome` 的安全匹配逻辑，补齐进程关闭/收尾链路的单元测试。（#26）

@@ -19,7 +19,7 @@ BOSS直聘职位抓取 + 分析 — 纯 CDP raw protocol
   uv run python3 scripts/boss_cdp_raw.py --version
 """
 
-__version__ = "2.2.0"
+__version__ = "2.3.0"
 
 import json
 import time
@@ -1281,7 +1281,7 @@ CSV_COLUMNS = [
     "job_id", "title", "salary", "salary_source", "location", "tags", "boss_name",
     "boss_active_status",
     "company_scale", "company_stage", "company_industry", "skills",
-    "job_link", "welfare",
+    "job_link", "welfare", "is_new",
 ]
 
 DETAIL_CSV_COLUMNS = [
@@ -1384,6 +1384,81 @@ def flush_jobs(path, meta, jobs):
     meta["total"] = len(merged)
     meta["jobs"] = merged
     _atomic_write_json(path, meta)
+
+
+# ============================================================
+# 跨轮对比:标记本次新增岗位(#88)
+#
+# 基准规则:「文件名日期早于本轮」的、同 keyword+city 的、最近一份 JSON 结果。
+# 同一天的多份抓取折叠为一轮(今天的每一轮都以昨天或更早为基准),
+# 避免连续抓取时和几分钟前的自己 diff 出翻页抖动噪音。
+# ============================================================
+RESULT_FILE_RE = re.compile(r"^boss_jobs_(\d{8})_(\d{4})\.json$")
+
+
+def parse_result_file_time(filename):
+    """从结果文件名(boss_jobs_YYYYMMDD_HHMM.json)解析抓取时间。
+
+    非结果文件或格式非法返回 None(文件被复制后 mtime 会变,以文件名为准)。
+    """
+    match = RESULT_FILE_RE.match(os.path.basename(filename))
+    if not match:
+        return None
+    try:
+        return datetime.strptime(
+            f"{match.group(1)}_{match.group(2)}", "%Y%m%d_%H%M"
+        )
+    except ValueError:
+        return None
+
+
+def find_diff_base(result_dir, keyword, city, now=None):
+    """选取 is_new 对比的基准文件,找不到返回 None。
+
+    只接受 payload 中 keyword/city 与本轮一致的历史文件;损坏的 JSON 跳过。
+    """
+    now = now or datetime.now()
+    root = os.path.expanduser(result_dir)
+    best_path = None
+    best_dt = None
+    try:
+        entries = os.listdir(root)
+    except OSError:
+        return None
+    for name in entries:
+        file_dt = parse_result_file_time(name)
+        # 未来的文件和同一天的文件都不做基准(同天折叠为一轮)
+        if file_dt is None or file_dt.date() >= now.date():
+            continue
+        path = os.path.join(root, name)
+        try:
+            with open(path, encoding="utf-8") as f:
+                payload = json.load(f)
+        except (json.JSONDecodeError, OSError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("keyword") != keyword or payload.get("city") != city:
+            continue
+        if best_dt is None or file_dt > best_dt:
+            best_path = path
+            best_dt = file_dt
+    return best_path
+
+
+def load_base_ids(path):
+    """读取基准文件中已见岗位的 job_id 集合;文件缺失/损坏返回空集。"""
+    try:
+        with open(os.path.expanduser(path), encoding="utf-8") as f:
+            payload = json.load(f)
+    except (json.JSONDecodeError, OSError, ValueError):
+        return set()
+    jobs = payload.get("jobs", []) if isinstance(payload, dict) else []
+    return {
+        job.get("job_id")
+        for job in jobs
+        if isinstance(job, dict) and job.get("job_id")
+    }
 
 
 # ============================================================
@@ -1531,13 +1606,29 @@ def load_existing_details(input_path=None, detail_output=None, result_dir=DEFAUL
 # 抓取列表
 # ============================================================
 def scrape_list(keyword, city_input, max_pages, filters, output_path,
-                cdp_port=DEFAULT_CDP_PORT, fmt="json", allow_dom_fallback=False):
+                cdp_port=DEFAULT_CDP_PORT, fmt="json", allow_dom_fallback=False,
+                diff_base=None):
     city_name, city_code = resolve_city(city_input)
     cdp = CDPSession(cdp_port)
     all_jobs = []
     seen = set()
     if not output_path:
         output_path = default_output_path("jobs")
+
+    # 选定 is_new 对比基准(#88):显式 --diff-base 优先,否则按规则自动选取
+    if diff_base is None:
+        diff_base = find_diff_base(
+            os.path.dirname(output_path) or DEFAULT_RESULT_DIR, keyword, city_name
+        )
+    if diff_base:
+        base_ids = load_base_ids(diff_base)
+        base_dt = parse_result_file_time(diff_base)
+        base_desc = base_dt.strftime("%Y-%m-%d %H:%M") if base_dt else "指定文件"
+        print(f"📌 对比基准: {os.path.basename(diff_base)}({base_desc} 抓取),"
+              f"其中已见 {len(base_ids)} 条")
+    else:
+        base_ids = set()
+        print("📌 无同关键词历史基准,本次全部视为新增(is_new=true)")
 
     # 显示筛选条件
     filter_desc = []
@@ -1689,21 +1780,27 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
                 continue
 
             new = 0
+            new_count = 0
             for j in jobs:
                 key = j.get('job_link') or j['title']
                 j['job_id'] = hashlib.md5(key.encode()).hexdigest()[:16]
                 if key in seen:
                     continue
                 seen.add(key)
+                # is_new(#88):该岗位不在历史基准中,即本轮新增
+                j['is_new'] = j['job_id'] not in base_ids
                 all_jobs.append(j)
                 new += 1
+                if j['is_new']:
+                    new_count += 1
                 salary = j.get('salary','?')
                 scale = j.get('company_scale', '')
                 active = j.get('boss_active_status', '')
                 extra = f" | {scale}" if scale else ""
                 if active:
                     extra += f" | {active}"
-                print(f"  ✓ {j['title']} | {salary} | {j.get('location','')} | {j.get('boss_name','')}{extra}")
+                marker = "🆕 " if j['is_new'] else ""
+                print(f"  ✓ {marker}{j['title']} | {salary} | {j.get('location','')} | {j.get('boss_name','')}{extra}")
 
             print(f"  本页 {len(jobs)} 条, 新增 {new}, 累计 {len(all_jobs)}")
 
@@ -1738,7 +1835,8 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
         cdp.close()
 
     print(f"\n{'='*60}")
-    print(f"完成: {len(all_jobs)} 条")
+    new_total = len([j for j in all_jobs if j.get('is_new')])
+    print(f"完成: {len(all_jobs)} 条,其中新增 {new_total} 条(🆕)")
 
     if all_jobs:
         # 最终写入（含时间戳更新）
@@ -2657,6 +2755,7 @@ def main():
     p.add_argument("--city", default=DEFAULT_CITY_INPUT, help=f"城市 (中文名或代码，默认 {DEFAULT_CITY_INPUT})")
     p.add_argument("--pages", type=int, default=3, help=f"抓取页数 (最大 {MAX_PAGES})")
     p.add_argument("--output", default=None, help="列表数据输出路径")
+    p.add_argument("--diff-base", default=None, help="is_new 对比基准文件(默认自动取同关键词、日期早于本轮的最近一份结果)")
     p.add_argument("--detail-output", default=None, help="详情数据输出路径")
     p.add_argument("--cdp-port", type=int, default=DEFAULT_CDP_PORT,
                    help=f"CDP 调试端口 (默认 {DEFAULT_CDP_PORT})")
@@ -2785,6 +2884,7 @@ def main():
                 args.keyword, args.city, args.pages, filters, args.output,
                 cdp_port=args.cdp_port, fmt=args.format,
                 allow_dom_fallback=args.allow_dom_fallback,
+                diff_base=args.diff_base,
             )
         except LoginGateError as e:
             print(str(e))
