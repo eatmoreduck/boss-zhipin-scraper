@@ -31,7 +31,7 @@ SKILL.md / README(.en).md / CHANGELOG.md / CONTRIBUTING.md
 
 ## 改代码时的硬规则
 
-1. **版本号四处一致**：`scripts/boss_cdp_raw.py` 的 `__version__`（第 22 行附近）、`pyproject.toml`、`SKILL.md`、`README.md` 必须同步，否则 `VersionConsistencyTests` 会挂。改版本号时四处一起改。
+1. **版本号四处一致**：`scripts/boss_cdp_raw.py` 的 `__version__`（第 22 行附近）、`pyproject.toml`、`SKILL.md`、`README.md` 必须同步，否则 `VersionConsistencyTests` 会挂。改版本号时四处一起改，并跑 `uv lock` 同步 `uv.lock`——CI 用 `uv sync --locked` 安装，lockfile 版本落后会直接失败；本地 `.venv` 不走 lockfile，单测发现不了（#89 踩过）。
 2. **异常处理**：禁止 bare `except:`，必须捕获具体类型（`requests.ConnectionError`、`json.JSONDecodeError` 等），和现有代码保持一致。
 3. **改了用户可见行为 → 更新 `README.md`；有意义变更 → `CHANGELOG.md` 顶部加一条。**
 4. **README 双语同步**：`README.md`（中文）和 `README.en.md`（英文）必须保持一致，改了其中一个就要同步另一个。
@@ -43,6 +43,7 @@ SKILL.md / README(.en).md / CHANGELOG.md / CONTRIBUTING.md
 
 - `scripts/boss_cdp_raw.py` 是一个**长单文件**，包含：`CDPSession` 类（WebSocket 连 CDP，含事件缓冲 `events` / `drain_events`）、`NetworkJoblistCapture`（列表被动捕获）、`scrape_list`（列表抓取）、`scrape_details`（详情抓取）、`main`（argparse）。城市码表外置到 `data/city_codes.json`，`resolve_city` 查询链为「本地静态码表 → 运行时拉 BOSS 接口 → 原样兜底」。
 - **列表页 vs 详情页路径完全不同**：列表页导航真实搜索页，通过 CDP `Network` 域**被动捕获页面自身发出的 joblist 响应**（不注入任何请求，背景见 `NetworkJoblistCapture` 头部注释）；翻页靠滚动触发页面自身的无限滚动加载。详情页通过新开 tab → `Page.navigate` → 注入 JS 提取。改其中一条路径时，另一条不受影响。
+- **is_new 跨轮对比**（#88）：`scrape_list` 输出的每条岗位带 `is_new` 布尔（终端列表同步 🆕 标记），纯本地后处理、零额外请求，不碰抓取链路。基准自动选取（`find_diff_base`）：同 keyword+city、文件名时间戳早于本轮的最近一份 JSON 结果——时间从 `boss_jobs_YYYYMMDD_HHMM.json` 文件名解析（`parse_result_file_time`），不用 mtime（文件复制会改 mtime）；同一天多轮抓取折叠为一轮，不和几分钟前的自己 diff 出翻页抖动噪音（#50 的「搜索结果重复」由此缓解）。无历史基准时全体 `is_new=true` 并终端明示；`--diff-base` 显式指定优先。`load_base_ids` 读基准文件已见 job_id 集合做比对。
 - **BOSS 页面行为事实**（2026-08 实测，写代码前先知道）：搜索页无翻页控件、纯无限滚动，URL 带 `&page=N` 直跳无效（SPA 始终请求第 1 页）；页面自身请求是 POST + form body（URL 只有时间戳）；每页 15 条，`zpData.hasMore` 判断是否最后一页；反复自动化导航可能触发 `_security_check` 验证页。
 - **CDP target 焦点/可见性不变量**：统一通过 `create_page_session` 创建页面；自动化 target 默认后台打开并注册 visibility override + **焦点仿真**（`Emulation.setFocusEmulationEnabled`），两者都不可省——后台页真实的 `hidden/hasFocus=false` 状态会让无限滚动加载静默失效（实测 JS override 单独不生效，焦点仿真才解决），同时避免抢用户前台焦点（issue #18/#29）。只有需要用户操作的 `wait_for_login` 显式传 `background=False`。不要绕过 helper 直接新增 `Target.createTarget`。
 - 同一个 Chrome 实例的默认 browser context 下，新开 target **本就共享 cookies**，不要被「新 tab 丢 cookie」的直觉误导。
