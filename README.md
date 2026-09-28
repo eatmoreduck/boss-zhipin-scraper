@@ -52,7 +52,7 @@ python3 scripts/job_summary.py
 
 - 明文薪资（API 模式，绕过字体反爬）
 - Boss 活跃状态独立字段（`boss_active_status`）：列表兼容 `bossOnline`→「在线」，详情可得到「刚刚活跃」等更细状态
-- 跨轮新增标记（`is_new`）：每条岗位带布尔字段标识「是否为本次新增」（终端同步以 🆕 显示），基准自动取同关键词、日期早于本轮的最近一份结果；同一天多轮抓取折叠为一轮，`--diff-base` 可显式指定
+- 跨轮新增标记（`is_new`）：每条岗位带布尔字段标识「是否为本次新增」（终端同步以 🆕 显示），基准自动取同关键词同城市、日期早于本轮的最近一份结果；同一天多轮抓取折叠为一轮，`--diff-base` 可显式指定
 - JSON / CSV 双格式输出
 - 详情页 JD 抓取 + 技能分析
 - 抓取后聚合摘要 + 可复制提示词
@@ -185,7 +185,7 @@ python3 scripts/job_summary.py --top 15
 | `--no-detail` | 不抓取详情页 |
 | `--analysis` | 分析报告 |
 | `--merge FILE` | 合并已有数据（按 job_id 去重） |
-| `--diff-base FILE` | 指定 `is_new` 对比基准文件（默认自动取同关键词、文件名日期早于本轮的最近一份结果；无基准时全体视为新增） |
+| `--diff-base FILE` | 指定 `is_new` 对比基准文件（默认自动取同关键词同城市、文件名日期早于本轮的最近一份结果；无基准时全体视为新增） |
 | `--allow-dom-fallback` | API 无数据时允许降级 DOM 提取；默认关闭，薪资可能不可信 |
 | `--check` | 环境检查（CDP + 依赖 + 登录态） |
 | `--smoke-test` | 用真实 Chrome/CDP 跑一次 BOSS 搜索 API smoke test，不写结果文件 |

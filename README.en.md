@@ -50,7 +50,7 @@ Right after scraping you get: salary ranges, experience requirements, top skill 
 
 - Plaintext salary (API mode, bypasses font-based obfuscation)
 - Boss activity status as a separate field (`boss_active_status`): list maps `bossOnline`→"在线"; detail can provide finer labels like "刚刚活跃"
-- Cross-run new-job flag (`is_new`): every job carries a boolean marking whether it is new to this run (also shown as 🆕 in the terminal); the baseline defaults to the most recent prior result with the same keyword whose filename date is before today; multiple runs on the same day fold into one round; use `--diff-base` to override
+- Cross-run new-job flag (`is_new`): every job carries a boolean marking whether it is new to this run (also shown as 🆕 in the terminal); the baseline defaults to the most recent prior result with the same keyword and city whose filename date is before today; multiple runs on the same day fold into one round; use `--diff-base` to override
 - Dual JSON / CSV output
 - Detail-page JD scraping + skill analysis
 - Aggregated summary + copy-paste prompt after scraping
@@ -183,7 +183,7 @@ python3 scripts/job_summary.py --top 15
 | `--no-detail` | Do not scrape detail pages |
 | `--analysis` | Analysis report |
 | `--merge FILE` | Merge existing data (deduped by job_id) |
-| `--diff-base FILE` | Explicit baseline file for `is_new` (defaults to the most recent prior result with the same keyword whose filename date is before today; with no baseline, all jobs are treated as new) |
+| `--diff-base FILE` | Explicit baseline file for `is_new` (defaults to the most recent prior result with the same keyword and city whose filename date is before today; with no baseline, all jobs are treated as new) |
 | `--allow-dom-fallback` | Allow DOM extraction fallback when the API has no data; off by default, salaries may be unreliable |
 | `--check` | Environment check (CDP + deps + login state) |
 | `--smoke-test` | Run one real Chrome/CDP BOSS search API smoke test, writes no result files |
