@@ -320,6 +320,12 @@ python3 scripts/boss_cdp_raw.py --keyword "AI Agent" --city 上海 --pages 3 --c
 
 MIT
 
+## ☕ Buy Me a Coffee
+
+If this project helped your job search, feel free to buy the author a coffee:
+
+<p align="center"><img src="assets/reward-qr.png" width="220" alt="WeChat appreciation QR code"></p>
+
 ## Friends
 
 - [LINUX DO](https://linux.do/) — A sincere, friendly, and vibrant tech community. This project endorses and recommends it.

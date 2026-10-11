@@ -321,6 +321,12 @@ python3 scripts/boss_cdp_raw.py --keyword "AI Agent" --city 上海 --pages 3 --c
 
 MIT
 
+## ☕ 请作者喝杯咖啡
+
+如果这个项目帮到了你的求职，欢迎请作者喝杯咖啡：
+
+<p align="center"><img src="assets/reward-qr.png" width="220" alt="微信赞赏码"></p>
+
 ## 友情链接
 
 - [LINUX DO](https://linux.do/) — 真诚、友善、充满活力的技术社区，本项目认可并推荐。
