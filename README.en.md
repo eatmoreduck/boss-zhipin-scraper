@@ -322,7 +322,7 @@ MIT
 
 ## ☕ Buy Me a Coffee
 
-If this project helped your job search, feel free to buy the author a coffee:
+Every line of this project was written by AI agents burning tokens — so a tip doesn't buy coffee, it buys the next round of conversation. If it helped your job search, feel free to refill:
 
 <p align="center"><img src="assets/reward-qr.png" width="220" alt="WeChat appreciation QR code"></p>
 

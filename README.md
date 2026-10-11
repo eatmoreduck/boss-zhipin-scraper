@@ -323,7 +323,7 @@ MIT
 
 ## ☕ 请作者喝杯咖啡
 
-如果这个项目帮到了你的求职，欢迎请作者喝杯咖啡：
+这个项目的每一行代码都是 AI agent 烧 token 写出来的——所以打赏不会变成咖啡，而是变成下一轮对话的 token。如果它帮到了你的求职，欢迎续一杯：
 
 <p align="center"><img src="assets/reward-qr.png" width="220" alt="微信赞赏码"></p>
 
