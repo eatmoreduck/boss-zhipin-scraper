@@ -2135,6 +2135,17 @@ class CompanyFilterTests(unittest.TestCase):
         )
         self.assertEqual([item["job_id"] for item in by_name], ["1"])
 
+    def test_filter_details_to_jobs_drops_all_details_when_no_jobs_kept(self):
+        """公司过滤命中 0 条时,不能靠公司名兜底把范围外的 JD 留下来。"""
+        module = load_module()
+        details = [
+            {"job_id": "1", "company": "字节跳动", "skill_tags": ["Python"]},
+            {"job_id": "2", "company": "美团", "skill_tags": ["RustOnlySkill"]},
+        ]
+
+        self.assertEqual(module.filter_details_to_jobs([], details, "字节"), [])
+        self.assertEqual(module.filter_details_to_jobs(None, details, "字节"), [])
+
     def test_find_diff_base_requires_same_company_filter(self):
         module = load_module()
         with tempfile.TemporaryDirectory() as tmp:

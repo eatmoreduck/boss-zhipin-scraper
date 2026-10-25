@@ -1469,9 +1469,13 @@ def filter_details_to_jobs(jobs, details, company_raw=None):
     """分析前把详情收窄到当前岗位。
 
     有 job_id 时按 id 对齐;过滤后的岗位都没有 id 时,再按公司名片段兜底。
+    岗位列表为空表示公司过滤没有命中任何岗位,此时不应保留任何详情:
+    若继续走公司名兜底,范围外公司的 JD 会混进技能/JD 统计。
     """
     if not details:
         return details
+    if not jobs:
+        return []
     job_ids = {
         str(job.get("job_id")).strip()
         for job in jobs or []

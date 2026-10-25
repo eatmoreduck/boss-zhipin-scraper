@@ -370,6 +370,83 @@ class JobSummaryTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("公司范围: SHEIN", stdout.getvalue())
 
+    def test_main_drops_details_when_company_filter_matches_no_job(self):
+        """过滤命中 0 条时,详情也必须清空,不能把范围外公司的 JD 统计进摘要。"""
+        module = load_summary_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_path = pathlib.Path(tmp) / "boss_jobs_20260625_1200.json"
+            details_path = pathlib.Path(tmp) / "boss_details_20260625_1200.json"
+            jobs_path.write_text(json.dumps({
+                "keyword": "Java",
+                "city": "上海",
+                "jobs": [{
+                    "job_id": "1",
+                    "title": "后端",
+                    "salary": "20-40K",
+                    "location": "上海·浦东新区",
+                    "tags": "3-5年 | 本科",
+                    "boss_name": "阿里巴巴",
+                }],
+            }, ensure_ascii=False), encoding="utf-8")
+            details_path.write_text(json.dumps([
+                {
+                    "job_id": "1",
+                    "company": "阿里巴巴",
+                    "salary": "20-40K",
+                    "skill_tags": ["Spring", "Kafka"],
+                    "jd": "Java Spring Kafka 微服务",
+                },
+            ], ensure_ascii=False), encoding="utf-8")
+
+            with contextlib.redirect_stdout(io.StringIO()) as stdout:
+                code = module.main([
+                    "--input", str(jobs_path),
+                    "--details", str(details_path),
+                    "--company", "字节跳动",
+                    "--summary-only",
+                ])
+
+        text = stdout.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("列表岗位: 0 条；详情 JD: 0 条", text)
+        self.assertNotIn("Spring", text)
+        self.assertNotIn("Kafka", text)
+        self.assertNotIn("微服务", text)
+
+    def test_main_drops_details_when_kept_jobs_have_no_job_id(self):
+        """命中岗位没有 job_id 时,不能退回「保留全部详情」的兜底。"""
+        module = load_summary_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs_path = pathlib.Path(tmp) / "boss_jobs_20260625_1200.json"
+            details_path = pathlib.Path(tmp) / "boss_details_20260625_1200.json"
+            jobs_path.write_text(json.dumps({
+                "keyword": "Java",
+                "city": "上海",
+                "jobs": [{
+                    "title": "后端",
+                    "salary": "20-40K",
+                    "location": "上海·浦东新区",
+                    "tags": "3-5年 | 本科",
+                    "boss_name": "字节跳动",
+                }],
+            }, ensure_ascii=False), encoding="utf-8")
+            details_path.write_text(json.dumps([
+                {"job_id": "9", "company": "美团", "skill_tags": ["RustOnlySkill"], "jd": "Rust"},
+            ], ensure_ascii=False), encoding="utf-8")
+
+            with contextlib.redirect_stdout(io.StringIO()) as stdout:
+                code = module.main([
+                    "--input", str(jobs_path),
+                    "--details", str(details_path),
+                    "--company", "字节跳动",
+                    "--summary-only",
+                ])
+
+        text = stdout.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("列表岗位: 1 条；详情 JD: 0 条", text)
+        self.assertNotIn("RustOnlySkill", text)
+
     def test_summary_script_is_documented_and_packaged(self):
         readme = (ROOT_PATH / "README.md").read_text(encoding="utf-8")
         changelog = (ROOT_PATH / "CHANGELOG.md").read_text(encoding="utf-8")

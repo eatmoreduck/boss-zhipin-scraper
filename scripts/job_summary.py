@@ -159,6 +159,11 @@ def is_jd_noise_term(term):
 
 
 def build_summary(jobs, details=None, search_keyword="", city="", top=10, company_filter=""):
+    """聚合岗位与详情,生成摘要。
+
+    company_filter 只用于在摘要/提示词里展示公司范围,本函数不按它过滤:
+    岗位与详情的收窄由调用方负责(见 main 的 --company 分支)。
+    """
     details = filter_details_for_jobs(jobs, details or [])
 
     salary_ranges = Counter()
@@ -401,6 +406,10 @@ def main(argv=None):
     if company_needles:
         before = len(jobs)
         jobs, _ = boss.filter_job_records(jobs, args.company)
+        # 详情必须跟着岗位一起收窄：build_summary 内部的 job_id 对齐在
+        # 岗位为空或岗位缺 job_id 时会原样保留全部详情，导致范围外公司的
+        # JD 混进技能/JD 统计。
+        details = boss.filter_details_to_jobs(jobs, details, args.company)
         company_label = ",".join(company_needles)
         print(
             f"公司过滤: {', '.join(company_needles)} "
