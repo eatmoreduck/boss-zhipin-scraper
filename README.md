@@ -52,7 +52,8 @@ python3 scripts/job_summary.py
 
 - 明文薪资（API 模式，绕过字体反爬）
 - Boss 活跃状态独立字段（`boss_active_status`）：列表兼容 `bossOnline`→「在线」，详情可得到「刚刚活跃」等更细状态
-- 跨轮新增标记（`is_new`）：每条岗位带布尔字段标识「是否为本次新增」（终端同步以 🆕 显示），基准自动取同关键词同城市、日期早于本轮的最近一份结果；同一天多轮抓取折叠为一轮，`--diff-base` 可显式指定
+- 跨轮新增标记（`is_new`）：每条岗位带布尔字段标识「是否为本次新增」（终端同步以 🆕 显示），基准自动取同关键词同城市、公司过滤条件一致、日期早于本轮的最近一份结果；未使用 `--company` 时仍与旧结果（无公司过滤）对比；同一天多轮抓取折叠为一轮，`--diff-base` 可显式指定
+- 按公司名本地过滤（`--company`）：抓取完成后按 `boss_name` 做子串匹配，只保留目标公司；不改搜索请求、不额外发请求
 - JSON / CSV 双格式输出
 - 详情页 JD 抓取 + 技能分析
 - 抓取后聚合摘要 + 可复制提示词
@@ -177,6 +178,7 @@ python3 scripts/job_summary.py --top 15
 | 参数 | 说明 |
 |------|------|
 | `--keyword` | 搜索关键词（默认 "AI Agent"） |
+| `--company` | 按公司名本地过滤已抓取结果（匹配 `boss_name` 子串，英文逗号、中文逗号或顿号分隔多家，不区分大小写）。不改搜索 URL，零额外请求。见下方说明 |
 | `--city` | 城市（中文或 9 位代码，默认上海）。**支持全国城市**（一二三四五线全覆盖，共 300+ 个），运行时自动从 BOSS 同步最新城市码；码表见 [`data/city_codes.json`](data/city_codes.json)，或用 `--list-cities` 查看。本地及在线码表均无法识别的城市名会报错退出，避免静默得到 0 条结果 |
 | `--list-cities [关键词]` | 打印支持的城市列表，可选关键词过滤，如 `--list-cities 江` |
 | `--pages` | 页数（上限 10） |
@@ -185,7 +187,7 @@ python3 scripts/job_summary.py --top 15
 | `--no-detail` | 不抓取详情页 |
 | `--analysis` | 分析报告 |
 | `--merge FILE` | 合并已有数据（按 job_id 去重） |
-| `--diff-base FILE` | 指定 `is_new` 对比基准文件（默认自动取同关键词同城市、文件名日期早于本轮的最近一份结果；无基准时全体视为新增） |
+| `--diff-base FILE` | 指定 `is_new` 对比基准文件（默认自动取同关键词同城市、公司过滤条件一致、文件名日期早于本轮的最近一份结果；无基准时全体视为新增） |
 | `--allow-dom-fallback` | API 无数据时允许降级 DOM 提取；默认关闭，薪资可能不可信 |
 | `--check` | 环境检查（CDP + 依赖 + 登录态） |
 | `--smoke-test` | 用真实 Chrome/CDP 跑一次 BOSS 搜索 API smoke test，不写结果文件 |
@@ -204,6 +206,18 @@ python3 scripts/job_summary.py --top 15
 | `--cdp-port` | CDP 端口（默认 9222） |
 | `--scale/--salary/--experience/--degree` | 筛选条件 |
 
+`--company` 是本地后处理，不进入搜索 URL，也不新增网络请求。匹配字段是列表里的 `boss_name`（来自 joblist 响应的 `brandName`；详情记录回退到 `company`），规则是**不区分大小写的子串包含**。多家公司用 `,`、`，` 或 `、` 分隔，命中任一即保留；重复片段按大小写不敏感去重。
+
+过滤发生在 `--merge` 之后、详情抓取和 `--analysis` 之前：合并进来的旧数据按同一公司范围收窄，详情只抓保留下来的岗位，分析报告只统计这些岗位。`--input` 且未加 `--output` 时只在内存中过滤，不改写原文件；抓取产生的结果文件，或显式 `--output`，会整文件替换为过滤后的集合（不会把已丢掉的公司再合并回来），并写入 `company_filter`。`is_new` 的自动基准除了同关键词、同城市，还要求 `company_filter` 归一化后一致（大小写、顺序、分隔符不敏感）。升级前没有该字段的旧文件视为「未过滤」，不带 `--company` 的抓取仍按原来的方式对比。`--diff-base` 显式指定基准时跳过这套自动匹配。终端里的逐条抓取日志仍是捕获到的全量列表，过滤条数在抓取结束后打印。
+
+```bash
+# 抓取后只保留目标公司
+python3 scripts/boss_cdp_raw.py --keyword "Java" --city 上海 --pages 3 --company "字节跳动,阿里巴巴" --analysis
+
+# 对已有 JSON 按公司重新分析，不改写原文件
+python3 scripts/boss_cdp_raw.py --input ~/.boss-zhipin-scraper/job-result/boss_jobs_20260609_1200.json --company SHEIN --analysis --no-detail
+```
+
 ## 抓取后摘要与提示词
 
 `scripts/job_summary.py` 只读取已抓取的 `boss_jobs_*.json` 和 `boss_details_*.json`，做简单聚合分析并生成一段可复制提示词。它不读取本地简历文件，不引入 PDF 依赖，也不给个人与岗位做分数判断。
@@ -220,6 +234,9 @@ python3 scripts/job_summary.py \
 
 # 只输出提示词
 python3 scripts/job_summary.py --prompt-only
+
+# 摘要前按公司名过滤（与抓取命令的 --company 规则相同，纯本地）
+python3 scripts/job_summary.py --company "字节跳动,SHEIN"
 ```
 
 打包安装后也可以使用入口命令：

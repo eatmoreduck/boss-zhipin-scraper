@@ -13,6 +13,7 @@ BOSS直聘职位抓取 + 分析 — 纯 CDP raw protocol
   uv run python3 scripts/boss_cdp_raw.py --keyword "Java 风控" --city 101020100 --pages 5
   uv run python3 scripts/boss_cdp_raw.py --keyword "Java 风控" --scale 305 --salary 406
   uv run python3 scripts/boss_cdp_raw.py --keyword "Java 风控" --analysis
+  uv run python3 scripts/boss_cdp_raw.py --keyword "Java 风控" --company "字节跳动,阿里巴巴"
   uv run python3 scripts/boss_cdp_raw.py --keyword "Java 风控" --detail
   uv run python3 scripts/boss_cdp_raw.py --check
   uv run python3 scripts/boss_cdp_raw.py --setup-chrome
@@ -1387,11 +1388,155 @@ def flush_jobs(path, meta, jobs):
 
 
 # ============================================================
+# 公司名本地过滤(#97 方案 2)
+#
+# 只处理已经拿到的岗位,不改搜索 URL,不发额外请求。
+# 列表公司名是 boss_name(joblist 的 brandName);详情记录用 company。
+# ============================================================
+_COMPANY_SPLIT_RE = re.compile(r"[,，、]+")
+
+
+def parse_company_filter(raw):
+    """解析 --company。英文逗号、中文逗号、顿号都是分隔符。
+
+    去掉空白片段,按大小写不敏感去重并保留首次写法。
+    None、空串和非字符串返回空列表,表示不过滤。
+    """
+    if not isinstance(raw, str):
+        return []
+    needles = []
+    seen = set()
+    for part in _COMPANY_SPLIT_RE.split(raw):
+        text = part.strip()
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        needles.append(text)
+    return needles
+
+
+def company_filter_key(raw):
+    """归一化公司过滤条件,供 is_new 基准对齐。
+
+    大小写、顺序和分隔符都不影响结果。空过滤返回空串。
+    """
+    return ",".join(sorted(needle.casefold() for needle in parse_company_filter(raw)))
+
+
+def job_company_name(record):
+    """列表取 boss_name,详情等记录回退到 company。"""
+    if not isinstance(record, dict):
+        return ""
+    name = record.get("boss_name")
+    if name is None or str(name).strip() == "":
+        name = record.get("company")
+    return str(name or "").strip()
+
+
+def company_name_matches(name, needles):
+    """公司名是否包含任一片段。大小写不敏感的子串匹配。"""
+    folded = str(name or "").casefold()
+    for needle in needles:
+        token = str(needle or "").strip().casefold()
+        if token and token in folded:
+            return True
+    return False
+
+
+def filter_job_records(records, company_raw):
+    """按公司名片段过滤岗位或详情。纯本地。
+
+    返回 (kept, needles)。needles 为空时原样返回,不过滤。
+    """
+    if not isinstance(records, list):
+        records = []
+    else:
+        records = list(records)
+    needles = parse_company_filter(company_raw)
+    if not needles:
+        return records, needles
+    kept = [
+        record for record in records
+        if isinstance(record, dict) and company_name_matches(job_company_name(record), needles)
+    ]
+    return kept, needles
+
+
+def filter_details_to_jobs(jobs, details, company_raw=None):
+    """分析前把详情收窄到当前岗位。
+
+    有 job_id 时按 id 对齐;过滤后的岗位都没有 id 时,再按公司名片段兜底。
+    """
+    if not details:
+        return details
+    job_ids = {
+        str(job.get("job_id")).strip()
+        for job in jobs or []
+        if isinstance(job, dict) and str(job.get("job_id") or "").strip()
+    }
+    if job_ids:
+        return [
+            detail for detail in details
+            if isinstance(detail, dict) and str(detail.get("job_id") or "").strip() in job_ids
+        ]
+    needles = parse_company_filter(company_raw)
+    if not needles:
+        return list(details)
+    return [
+        detail for detail in details
+        if isinstance(detail, dict) and company_name_matches(job_company_name(detail), needles)
+    ]
+
+
+def write_job_list_file(path, list_data):
+    """整文件替换岗位列表,不与磁盘上的旧岗位合并。
+
+    flush_jobs 会把新列表和旧文件按 job_id 合并。公司过滤丢掉的记录
+    如果再走 flush_jobs,会从旧文件里合并回来,所以过滤结果必须替换写入。
+    """
+    path = os.path.expanduser(path)
+    existing = {}
+    if os.path.isfile(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                existing = loaded
+        except (json.JSONDecodeError, OSError, ValueError) as exc:
+            log.warning(f"无法读取已有结果 {path}: {exc}")
+    jobs = list(list_data.get("jobs") or [])
+    payload = dict(existing)
+    payload["keyword"] = list_data.get("keyword", existing.get("keyword", ""))
+    payload["city"] = list_data.get("city", existing.get("city", ""))
+    if "filters" in list_data or "filters" not in payload:
+        payload["filters"] = list_data.get("filters", existing.get("filters", {}))
+    if "filter_desc" in list_data or "filter_desc" not in payload:
+        payload["filter_desc"] = list_data.get("filter_desc", existing.get("filter_desc", []))
+    payload["scraped_at"] = (
+        list_data.get("scraped_at")
+        or existing.get("scraped_at")
+        or datetime.now().isoformat()
+    )
+    if list_data.get("merged_from"):
+        payload["merged_from"] = list_data["merged_from"]
+    payload["company_filter"] = list_data.get("company_filter", "")
+    payload["total"] = len(jobs)
+    payload["jobs"] = jobs
+    _atomic_write_json(path, payload)
+    print(f"已按公司过滤保存: {path}")
+
+
+# ============================================================
 # 跨轮对比:标记本次新增岗位(#88)
 #
 # 基准规则:「文件名日期早于本轮」的、同 keyword+city 的、最近一份 JSON 结果。
 # 同一天的多份抓取折叠为一轮(今天的每一轮都以昨天或更早为基准),
 # 避免连续抓取时和几分钟前的自己 diff 出翻页抖动噪音。
+# 带 --company 时(#97),基准还要求 company_filter 归一化后一致,
+# 避免同关键词不同公司维度的两轮互相 diff。
 # ============================================================
 RESULT_FILE_RE = re.compile(r"^boss_jobs_(\d{8})_(\d{4})\.json$")
 
@@ -1412,12 +1557,15 @@ def parse_result_file_time(filename):
         return None
 
 
-def find_diff_base(result_dir, keyword, city, now=None):
+def find_diff_base(result_dir, keyword, city, now=None, company_filter=""):
     """选取 is_new 对比的基准文件,找不到返回 None。
 
-    只接受 payload 中 keyword/city 与本轮一致的历史文件;损坏的 JSON 跳过。
+    只接受 payload 中 keyword、city、company_filter 与本轮一致的历史文件。
+    company_filter 按大小写和顺序归一化后比较;旧文件没有该字段时视为未过滤,
+    因此不带 --company 的抓取仍能对比升级前的结果。损坏的 JSON 跳过。
     """
     now = now or datetime.now()
+    wanted_company = company_filter_key(company_filter)
     root = os.path.expanduser(result_dir)
     best_path = None
     best_dt = None
@@ -1439,6 +1587,10 @@ def find_diff_base(result_dir, keyword, city, now=None):
         if not isinstance(payload, dict):
             continue
         if payload.get("keyword") != keyword or payload.get("city") != city:
+            continue
+        raw_company = payload.get("company_filter", "")
+        payload_company = company_filter_key(raw_company) if isinstance(raw_company, str) else ""
+        if payload_company != wanted_company:
             continue
         if best_dt is None or file_dt > best_dt:
             best_path = path
@@ -1607,7 +1759,7 @@ def load_existing_details(input_path=None, detail_output=None, result_dir=DEFAUL
 # ============================================================
 def scrape_list(keyword, city_input, max_pages, filters, output_path,
                 cdp_port=DEFAULT_CDP_PORT, fmt="json", allow_dom_fallback=False,
-                diff_base=None):
+                diff_base=None, company_filter=None):
     city_name, city_code = resolve_city(city_input)
     cdp = CDPSession(cdp_port)
     all_jobs = []
@@ -1615,10 +1767,17 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
     if not output_path:
         output_path = default_output_path("jobs")
 
-    # 选定 is_new 对比基准(#88):显式 --diff-base 优先,否则按规则自动选取
+    # 公司过滤不参与捕获。这里只用来选 is_new 基准,岗位本身在 main 里过滤。
+    company_needles = parse_company_filter(company_filter)
+
+    # 选定 is_new 对比基准(#88):显式 --diff-base 优先,否则按规则自动选取。
+    # 带 --company 时基准还要公司过滤条件一致(#97)。
     if diff_base is None:
         diff_base = find_diff_base(
-            os.path.dirname(output_path) or DEFAULT_RESULT_DIR, keyword, city_name
+            os.path.dirname(output_path) or DEFAULT_RESULT_DIR,
+            keyword,
+            city_name,
+            company_filter=company_filter,
         )
     if diff_base:
         base_ids = load_base_ids(diff_base)
@@ -1628,7 +1787,10 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
               f"其中已见 {len(base_ids)} 条")
     else:
         base_ids = set()
-        print("📌 无同关键词历史基准,本次全部视为新增(is_new=true)")
+        if company_needles:
+            print("📌 无同关键词、同城市且公司过滤一致的历史基准,本次全部视为新增(is_new=true)")
+        else:
+            print("📌 无同关键词历史基准,本次全部视为新增(is_new=true)")
 
     # 显示筛选条件
     filter_desc = []
@@ -1659,6 +1821,8 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
 
     print(f"=== BOSS直聘抓取 ===")
     print(f"关键词: {keyword} | 城市: {city_name} | 页数: {max_pages}")
+    if company_needles:
+        print(f"公司过滤: {' | '.join(company_needles)}（抓取结束后按 boss_name 子串本地过滤，搜索请求不变）")
     if filter_desc:
         print(f"筛选: {' | '.join(filter_desc)}")
     print()
@@ -1856,7 +2020,15 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
     else:
         print("无数据")
 
-    return {"keyword": keyword, "city": city_name, "total": len(all_jobs), "jobs": all_jobs}
+    return {
+        "keyword": keyword,
+        "city": city_name,
+        "total": len(all_jobs),
+        "jobs": all_jobs,
+        "output_path": output_path,
+        "filters": filters,
+        "filter_desc": filter_desc,
+    }
 
 
 # ============================================================
@@ -2084,6 +2256,9 @@ def analyze(list_data, details=None, search_keyword=""):
     print(f"\n{'='*60}")
     print(f"  分析报告: {list_data.get('keyword','')} @ {list_data.get('city','')}")
     print(f"  共 {len(jobs)} 条职位")
+    company_filter = str(list_data.get("company_filter") or "").strip()
+    if company_filter:
+        print(f"  公司过滤: {company_filter}")
     print(f"{'='*60}")
 
     # 1. 薪资分析
@@ -2741,6 +2916,12 @@ def main():
   # 合并旧数据
   %(prog)s --keyword "Java 风控" --pages 3 --merge old_data.json
 
+  # 抓取后只保留目标公司（本地过滤，不额外请求）
+  %(prog)s --keyword "Java" --city 上海 --pages 3 --company "字节跳动,阿里巴巴" --no-detail
+
+  # 对已有结果按公司做分析（不改写输入文件）
+  %(prog)s --input jobs.json --company SHEIN --analysis --no-detail
+
   # 环境检查
   %(prog)s --check
 
@@ -2753,9 +2934,20 @@ def main():
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     p.add_argument("--keyword", default="AI Agent", help="搜索关键词")
     p.add_argument("--city", default=DEFAULT_CITY_INPUT, help=f"城市 (中文名或代码，默认 {DEFAULT_CITY_INPUT})")
+    p.add_argument(
+        "--company",
+        default=None,
+        help="按公司名本地过滤结果（匹配 boss_name 子串，逗号或顿号分隔多家，不区分大小写）。"
+             "不改搜索请求；过滤在 --merge 之后、详情与 --analysis 之前。"
+             "is_new 自动基准额外要求公司过滤条件一致",
+    )
     p.add_argument("--pages", type=int, default=3, help=f"抓取页数 (最大 {MAX_PAGES})")
     p.add_argument("--output", default=None, help="列表数据输出路径")
-    p.add_argument("--diff-base", default=None, help="is_new 对比基准文件(默认自动取同关键词同城市、日期早于本轮的最近一份结果)")
+    p.add_argument(
+        "--diff-base",
+        default=None,
+        help="is_new 对比基准文件(默认自动取同关键词同城市、公司过滤条件一致、日期早于本轮的最近一份结果)",
+    )
     p.add_argument("--detail-output", default=None, help="详情数据输出路径")
     p.add_argument("--cdp-port", type=int, default=DEFAULT_CDP_PORT,
                    help=f"CDP 调试端口 (默认 {DEFAULT_CDP_PORT})")
@@ -2885,6 +3077,7 @@ def main():
                 cdp_port=args.cdp_port, fmt=args.format,
                 allow_dom_fallback=args.allow_dom_fallback,
                 diff_base=args.diff_base,
+                company_filter=args.company,
             )
         except LoginGateError as e:
             print(str(e))
@@ -2896,6 +3089,7 @@ def main():
         merged_jobs = merge_jobs(args.merge, list_data.get("jobs", []))
         list_data["jobs"] = merged_jobs
         list_data["total"] = len(merged_jobs)
+        list_data["merged_from"] = args.merge
         # 重新保存合并结果
         if args.output:
             flush_jobs(args.output, {
@@ -2912,6 +3106,37 @@ def main():
                 write_csv(csv_path, merged_jobs)
         # 同时加载旧详情，供后续详情抓取/分析合并（按 job_id 去重）
         merged_details = merge_details(args.merge, [])
+
+    # 公司过滤是纯本地后处理(#97):不改搜索请求。放在 --merge 之后,
+    # 这样合并进来的旧数据也按同一公司范围收窄;放在详情和分析之前,
+    # 详情只抓保留下来的岗位。
+    company_needles = parse_company_filter(args.company)
+    if company_needles:
+        before_count = len(list_data.get("jobs") or [])
+        kept, _ = filter_job_records(list_data.get("jobs"), args.company)
+        new_kept = len([job for job in kept if job.get("is_new")])
+        list_data["jobs"] = kept
+        list_data["total"] = len(kept)
+        list_data["company_filter"] = ",".join(company_needles)
+        print(
+            f"公司过滤: {', '.join(company_needles)} "
+            f"(boss_name 子串匹配,不区分大小写) {before_count} → {len(kept)} 条"
+            f",其中新增 {new_kept} 条"
+        )
+        if not kept:
+            print("  没有公司名包含以上片段的岗位")
+        explicit_output = args.output
+        scraped_output = None if args.input else list_data.get("output_path")
+        save_path = explicit_output or scraped_output
+        if save_path and (explicit_output or os.path.isfile(os.path.expanduser(save_path))):
+            write_job_list_file(save_path, list_data)
+            if args.format == "csv":
+                csv_path = save_path.rsplit(".", 1)[0] + ".csv"
+                write_csv(csv_path, kept)
+        elif args.input:
+            print("未写回输入文件。如需保存过滤结果，请加 --output")
+        if merged_details:
+            merged_details, _ = filter_job_records(merged_details, args.company)
 
     # 抓详情
     details = None
@@ -2934,6 +3159,8 @@ def main():
         # 如果有详情文件也加载
         if not details:
             details = load_existing_details(args.input, args.detail_output)
+        if company_needles and details:
+            details = filter_details_to_jobs(list_data.get("jobs"), details, args.company)
         analyze(list_data, details, search_keyword=args.keyword)
 
     # 抓取正常结束后按需收尾（仅成功路径；异常/登录失败走 sys.exit，不会触发，保留登录态）

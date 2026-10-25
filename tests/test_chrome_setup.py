@@ -1755,6 +1755,7 @@ class ChromeSetupTests(unittest.TestCase):
         self.assertIn("--login-timeout", result.stdout)
         self.assertIn("--stop-chrome", result.stdout)
         self.assertIn("--close-chrome", result.stdout)
+        self.assertIn("--company", result.stdout)
 
 
 class tempfile_profile:
@@ -2036,6 +2037,318 @@ class IsNewDiffTests(unittest.TestCase):
                 f.write("{oops")
             self.assertEqual(module.load_base_ids(broken), set())
             self.assertEqual(module.load_base_ids(os.path.join(tmp, "nope.json")), set())
+
+
+class CompanyFilterTests(unittest.TestCase):
+    """--company 本地过滤(#97):子串匹配、落盘替换,以及 is_new 基准的公司维度。"""
+
+    def _write_result(self, dir_path, name, keyword, city, job_ids, company_filter=None):
+        payload = {
+            "keyword": keyword,
+            "city": city,
+            "jobs": [
+                {"job_id": jid, "title": f"岗位{jid}", "boss_name": "字节跳动"}
+                for jid in job_ids
+            ],
+        }
+        if company_filter is not None:
+            payload["company_filter"] = company_filter
+        path = os.path.join(dir_path, name)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        return path
+
+    def test_parse_company_filter_splits_dedupes_and_keeps_first_spelling(self):
+        module = load_module()
+
+        self.assertEqual(module.parse_company_filter(None), [])
+        self.assertEqual(module.parse_company_filter(""), [])
+        self.assertEqual(module.parse_company_filter("  ， , 、 "), [])
+        self.assertEqual(module.parse_company_filter(123), [])
+        self.assertEqual(
+            module.parse_company_filter(" 字节 , 阿里巴巴 ， 字节 、 SHEIN、shein "),
+            ["字节", "阿里巴巴", "SHEIN"],
+        )
+
+    def test_company_filter_key_ignores_case_order_and_separator(self):
+        module = load_module()
+
+        self.assertEqual(module.company_filter_key(""), "")
+        self.assertEqual(module.company_filter_key(None), "")
+        self.assertEqual(
+            module.company_filter_key("阿里,字节"),
+            module.company_filter_key("字节，阿里"),
+        )
+        self.assertEqual(
+            module.company_filter_key("字节、阿里"),
+            module.company_filter_key(" 阿里 , 字节 "),
+        )
+        self.assertEqual(module.company_filter_key("SHEIN"), module.company_filter_key("shein"))
+
+    def test_company_name_match_is_case_insensitive_substring(self):
+        module = load_module()
+
+        self.assertTrue(module.company_name_matches("字节跳动", ["字节"]))
+        self.assertTrue(module.company_name_matches("SHEIN科技", ["shein"]))
+        self.assertTrue(module.company_name_matches("OpenAI", ["AI"]))
+        self.assertFalse(module.company_name_matches("美团", ["字节"]))
+        self.assertFalse(module.company_name_matches("", ["字节"]))
+        self.assertFalse(module.company_name_matches("字节跳动", []))
+
+    def test_filter_job_records_keeps_matches_and_company_field_fallback(self):
+        module = load_module()
+        records = [
+            {"job_id": "1", "boss_name": "字节跳动"},
+            {"job_id": "2", "boss_name": "美团"},
+            {"job_id": "3", "company": "阿里巴巴集团"},
+            "junk",
+        ]
+
+        kept, needles = module.filter_job_records(records, "字节,阿里")
+
+        self.assertEqual(needles, ["字节", "阿里"])
+        self.assertEqual([item["job_id"] for item in kept], ["1", "3"])
+
+        unchanged, empty = module.filter_job_records(records, "  ， ")
+        self.assertEqual(empty, [])
+        self.assertEqual(unchanged, records)
+        self.assertEqual(module.filter_job_records(None, "字节"), ([], ["字节"]))
+
+    def test_filter_details_to_jobs_uses_id_then_company_name(self):
+        module = load_module()
+        details = [
+            {"job_id": "1", "company": "字节跳动", "skill_tags": ["Python"]},
+            {"job_id": "2", "company": "美团", "skill_tags": ["RustOnlySkill"]},
+        ]
+
+        by_id = module.filter_details_to_jobs(
+            [{"job_id": "1", "boss_name": "字节跳动"}],
+            details,
+            "字节",
+        )
+        self.assertEqual([item["job_id"] for item in by_id], ["1"])
+
+        by_name = module.filter_details_to_jobs(
+            [{"boss_name": "字节跳动"}],
+            details,
+            "字节",
+        )
+        self.assertEqual([item["job_id"] for item in by_name], ["1"])
+
+    def test_find_diff_base_requires_same_company_filter(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_result(tmp, "boss_jobs_20260910_0900.json", "Java", "上海", ["a"])
+            self._write_result(
+                tmp, "boss_jobs_20260912_0900.json", "Java", "上海", ["b"], company_filter="美团",
+            )
+            self._write_result(
+                tmp, "boss_jobs_20260916_1606.json", "Java", "上海", ["c"], company_filter="阿里,字节",
+            )
+            self._write_result(
+                tmp, "boss_jobs_20260918_1000.json", "Java", "上海", ["d"], company_filter="SHEIN",
+            )
+            self._write_result(
+                tmp, "boss_jobs_20260919_1000.json", "Python", "上海", ["e"], company_filter="字节,阿里",
+            )
+            now = datetime(2026, 9, 28, 20, 30)
+
+            unfiltered = module.find_diff_base(tmp, "Java", "上海", now=now)
+            scoped = module.find_diff_base(
+                tmp, "Java", "上海", now=now, company_filter="字节，阿里",
+            )
+            case_insensitive = module.find_diff_base(
+                tmp, "Java", "上海", now=now, company_filter="shein",
+            )
+            same_day = module.find_diff_base(
+                tmp, "Java", "上海",
+                now=datetime(2026, 9, 16, 18, 0),
+                company_filter="字节,阿里",
+            )
+
+        self.assertTrue(unfiltered.endswith("boss_jobs_20260910_0900.json"))
+        self.assertTrue(scoped.endswith("boss_jobs_20260916_1606.json"))
+        self.assertTrue(case_insensitive.endswith("boss_jobs_20260918_1000.json"))
+        self.assertIsNone(same_day)
+
+    def test_write_job_list_file_replaces_jobs_instead_of_merging(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "jobs.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "keyword": "Java",
+                    "city": "上海",
+                    "filters": {"salary": "406"},
+                    "jobs": [
+                        {"job_id": "old", "boss_name": "美团", "title": "旧"},
+                        {"job_id": "keep", "boss_name": "字节跳动", "title": "留"},
+                    ],
+                }, f, ensure_ascii=False)
+
+            module.write_job_list_file(path, {
+                "keyword": "Java",
+                "city": "上海",
+                "company_filter": "字节跳动",
+                "jobs": [{"job_id": "keep", "boss_name": "字节跳动", "title": "留"}],
+            })
+
+            with open(path, encoding="utf-8") as f:
+                saved = json.load(f)
+
+        self.assertEqual([job["job_id"] for job in saved["jobs"]], ["keep"])
+        self.assertEqual(saved["company_filter"], "字节跳动")
+        self.assertEqual(saved["filters"], {"salary": "406"})
+        self.assertEqual(saved["keyword"], "Java")
+        self.assertEqual(saved["total"], 1)
+
+    def test_scrape_list_scopes_baseline_without_filtering_capture(self):
+        """公司维度只影响基准选取,不改搜索 URL,也不在捕获环节丢岗位。"""
+        module = load_module()
+        page = {"code": 0, "zpData": {"hasMore": False, "jobList": [
+            {"jobName": "A", "salaryDesc": "10K", "encryptJobId": "e1", "brandName": "字节跳动"},
+            {"jobName": "B", "salaryDesc": "20K", "encryptJobId": "e2", "brandName": "美团"},
+        ]}}
+        cdp = FakeCaptureCDP(
+            pending_batches=[make_joblist_events("r1")],
+            responses={"r1": json.dumps(page)},
+        )
+        module._request_counter = 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = str(pathlib.Path(tmp) / "jobs.json")
+            with mock.patch.object(module, "CDPSession", lambda port=9222: cdp), \
+                    mock.patch.object(module, "resolve_city", return_value=("上海", "101020100")), \
+                    mock.patch("time.sleep", lambda s: None), \
+                    mock.patch.object(module, "random", random.Random(7)), \
+                    mock.patch.object(module, "find_diff_base", return_value=None) as find_base:
+                result = module.scrape_list(
+                    "Java", "上海", 1, {}, output_path,
+                    cdp_port=9333, company_filter="字节跳动,阿里",
+                )
+            with open(output_path, encoding="utf-8") as f:
+                saved = json.load(f)
+
+        self.assertEqual([job["boss_name"] for job in result["jobs"]], ["字节跳动", "美团"])
+        self.assertEqual(find_base.call_args.kwargs["company_filter"], "字节跳动,阿里")
+        self.assertEqual(find_base.call_args.args[1], "Java")
+        self.assertEqual(find_base.call_args.args[2], "上海")
+        navigations = [params for method, params in cdp.sent if method == "Page.navigate"]
+        self.assertEqual(len(navigations), 1)
+        self.assertNotIn("字节", navigations[0]["url"])
+        self.assertNotIn("阿里", navigations[0]["url"])
+        self.assertNotIn("company_filter", saved)
+        self.assertEqual(len(saved["jobs"]), 2)
+
+    def test_input_company_filter_does_not_rewrite_source_and_scopes_analysis(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "boss_jobs_20260101_0000.json")
+            payload = {
+                "keyword": "Java",
+                "city": "上海",
+                "jobs": [
+                    {
+                        "job_id": "1", "title": "后端", "salary": "20-40K",
+                        "location": "上海·浦东新区", "tags": "3-5年 | 本科",
+                        "boss_name": "字节跳动", "is_new": True,
+                    },
+                    {
+                        "job_id": "2", "title": "客户端", "salary": "15-25K",
+                        "location": "上海·徐汇区", "tags": "1-3年 | 本科",
+                        "boss_name": "美团", "is_new": False,
+                    },
+                ],
+            }
+            with open(src, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False)
+            details = [
+                {"job_id": "1", "company": "字节跳动", "skill_tags": ["Python"], "jd": "Python"},
+                {"job_id": "2", "company": "美团", "skill_tags": ["RustOnlySkill"], "jd": "Rust"},
+            ]
+            with mock.patch.object(sys, "argv", [
+                "boss_cdp_raw.py", "--input", src, "--company", "字节",
+                "--analysis", "--no-detail",
+            ]), mock.patch.object(module, "require_runtime_dependencies", return_value=True), \
+                    mock.patch.object(module, "scrape_list") as scrape_list, \
+                    mock.patch.object(module, "scrape_details") as scrape_details, \
+                    mock.patch.object(module, "load_existing_details", return_value=details), \
+                    redirect_stdout(io.StringIO()) as output:
+                module.main()
+            text = output.getvalue()
+            with open(src, encoding="utf-8") as f:
+                saved = json.load(f)
+
+        self.assertIn("字节跳动", text)
+        self.assertNotIn("美团", text)
+        self.assertNotIn("RustOnlySkill", text)
+        self.assertIn("未写回输入文件", text)
+        scrape_list.assert_not_called()
+        scrape_details.assert_not_called()
+        self.assertEqual(len(saved["jobs"]), 2)
+        self.assertNotIn("company_filter", saved)
+
+    def test_company_filter_output_replaces_file_and_runs_after_merge(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "fresh.json")
+            merge_path = os.path.join(tmp, "old.json")
+            out_path = os.path.join(tmp, "out.json")
+            with open(src, "w", encoding="utf-8") as f:
+                json.dump({
+                    "keyword": "Java",
+                    "city": "上海",
+                    "jobs": [
+                        {"job_id": "1", "title": "新字节", "boss_name": "字节跳动", "is_new": True},
+                        {"job_id": "2", "title": "美团岗", "boss_name": "美团", "is_new": True},
+                    ],
+                }, f, ensure_ascii=False)
+            with open(merge_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "jobs": [
+                        {"job_id": "3", "title": "阿里岗", "boss_name": "阿里巴巴", "is_new": False},
+                        {"job_id": "4", "title": "老字节", "boss_name": "字节跳动", "is_new": False},
+                    ],
+                    "details": [
+                        {"job_id": "3", "company": "阿里巴巴"},
+                        {"job_id": "9", "company": "美团"},
+                    ],
+                }, f, ensure_ascii=False)
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "keyword": "Java",
+                    "city": "上海",
+                    "jobs": [{"job_id": "old", "title": "历史", "boss_name": "美团"}],
+                }, f, ensure_ascii=False)
+
+            with mock.patch.object(sys, "argv", [
+                "boss_cdp_raw.py",
+                "--input", src,
+                "--merge", merge_path,
+                "--company", "字节,阿里",
+                "--output", out_path,
+                "--no-detail",
+            ]), mock.patch.object(module, "require_runtime_dependencies", return_value=True), \
+                    mock.patch.object(module, "scrape_list") as scrape_list, \
+                    mock.patch.object(module, "scrape_details") as scrape_details, \
+                    redirect_stdout(io.StringIO()):
+                module.main()
+
+            with open(out_path, encoding="utf-8") as f:
+                saved = json.load(f)
+            with open(src, encoding="utf-8") as f:
+                source = json.load(f)
+
+        self.assertEqual(
+            sorted(job["job_id"] for job in saved["jobs"]),
+            ["1", "3", "4"],
+        )
+        self.assertEqual(saved["company_filter"], "字节,阿里")
+        self.assertEqual(saved["merged_from"], merge_path)
+        self.assertNotIn("old", {job["job_id"] for job in saved["jobs"]})
+        self.assertEqual(len(source["jobs"]), 2)
+        scrape_list.assert_not_called()
+        scrape_details.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -35,17 +35,19 @@ def load_jobs_file(path):
 
     if isinstance(payload, dict):
         jobs = payload.get("jobs", [])
+        company_filter = payload.get("company_filter", "")
         metadata = {
             "keyword": payload.get("keyword", ""),
             "city": payload.get("city", ""),
+            "company_filter": company_filter if isinstance(company_filter, str) else "",
             "source": path,
         }
         return jobs if isinstance(jobs, list) else [], metadata
 
     if isinstance(payload, list):
-        return payload, {"keyword": "", "city": "", "source": path}
+        return payload, {"keyword": "", "city": "", "company_filter": "", "source": path}
 
-    return [], {"keyword": "", "city": "", "source": path}
+    return [], {"keyword": "", "city": "", "company_filter": "", "source": path}
 
 
 def split_tags(raw):
@@ -156,7 +158,7 @@ def is_jd_noise_term(term):
     return normalized in JD_NOISE_TERMS
 
 
-def build_summary(jobs, details=None, search_keyword="", city="", top=10):
+def build_summary(jobs, details=None, search_keyword="", city="", top=10, company_filter=""):
     details = filter_details_for_jobs(jobs, details or [])
 
     salary_ranges = Counter()
@@ -230,6 +232,7 @@ def build_summary(jobs, details=None, search_keyword="", city="", top=10):
     return {
         "keyword": search_keyword,
         "city": city,
+        "company_filter": company_filter,
         "total_jobs": len([job for job in jobs if isinstance(job, dict)]),
         "total_details": len([detail for detail in details if isinstance(detail, dict)]),
         "salary_ranges": _most_common(salary_ranges, top),
@@ -254,6 +257,10 @@ def format_summary(summary):
     lines = [
         f"岗位市场摘要: {title}",
         f"列表岗位: {summary['total_jobs']} 条；详情 JD: {summary['total_details']} 条",
+    ]
+    if summary.get("company_filter"):
+        lines.append(f"公司过滤: {summary['company_filter']}")
+    lines.extend([
         "",
         f"薪资区间: {_format_items(summary['salary_ranges'])}",
         f"经验要求: {_format_items(summary['experience'])}",
@@ -262,7 +269,7 @@ def format_summary(summary):
         f"高频公司: {_format_items(summary['companies'])}",
         f"技能标签: {_format_items(summary['skill_tags'])}",
         f"JD 高频词: {_format_items(summary['jd_terms'])}",
-    ]
+    ])
     return "\n".join(lines)
 
 
@@ -291,11 +298,15 @@ def build_prompt(summary):
     degree_context = _format_items(summary.get("degrees", [])[:5])
     district_context = _format_items(summary.get("districts", [])[:5])
 
-    return "\n".join([
+    lines = [
         "请基于下面的 BOSS 直聘岗位市场摘要，帮我优化求职材料和面试准备。",
         "",
         f"岗位市场摘要: {summary.get('keyword') or '未指定关键词'} @ {summary.get('city') or '未指定城市'}",
         f"样本规模: 列表 {summary.get('total_jobs', 0)} 条，详情 JD {summary.get('total_details', 0)} 条",
+    ]
+    if summary.get("company_filter"):
+        lines.append(f"公司范围: {summary['company_filter']}（公司名子串匹配，仅统计这些公司的岗位）")
+    lines.extend([
         f"高频技能/关键词: {', '.join(skill_context) if skill_context else '暂无'}",
         f"常见薪资区间: {salary_context}",
         f"主流经验要求: {exp_context}",
@@ -310,6 +321,7 @@ def build_prompt(summary):
         "",
         "要求：不要虚构经历，只把真实经历改写得更贴近这些岗位；结论要引用上面的统计依据。",
     ])
+    return "\n".join(lines)
 
 
 def load_detail_file(path):
@@ -343,6 +355,11 @@ def build_arg_parser():
     parser.add_argument("--result-dir", default=DEFAULT_RESULT_DIR, help="默认结果目录")
     parser.add_argument("--keyword", help="覆盖列表文件里的搜索关键词")
     parser.add_argument("--city", help="覆盖列表文件里的城市")
+    parser.add_argument(
+        "--company",
+        default=None,
+        help="按公司名过滤已抓取岗位（boss_name 子串，逗号或顿号分隔多家，不区分大小写）。纯本地，不发请求",
+    )
     parser.add_argument("--top", type=positive_int, default=10, help="每个维度展示前 N 项")
     output_group = parser.add_mutually_exclusive_group()
     output_group.add_argument("--summary-only", action="store_true", help="只输出聚合摘要")
@@ -380,7 +397,25 @@ def main(argv=None):
         return 1
     keyword = args.keyword if args.keyword is not None else metadata.get("keyword", "")
     city = args.city if args.city is not None else metadata.get("city", "")
-    summary = build_summary(jobs, details, search_keyword=keyword, city=city, top=args.top)
+    company_needles = boss.parse_company_filter(args.company)
+    if company_needles:
+        before = len(jobs)
+        jobs, _ = boss.filter_job_records(jobs, args.company)
+        company_label = ",".join(company_needles)
+        print(
+            f"公司过滤: {', '.join(company_needles)} "
+            f"(boss_name 子串匹配,不区分大小写) {before} → {len(jobs)} 条"
+        )
+    else:
+        company_label = str(metadata.get("company_filter") or "")
+    summary = build_summary(
+        jobs,
+        details,
+        search_keyword=keyword,
+        city=city,
+        top=args.top,
+        company_filter=company_label,
+    )
 
     if not args.prompt_only:
         print(format_summary(summary))

@@ -50,7 +50,8 @@ Right after scraping you get: salary ranges, experience requirements, top skill 
 
 - Plaintext salary (API mode, bypasses font-based obfuscation)
 - Boss activity status as a separate field (`boss_active_status`): list maps `bossOnline`→"在线"; detail can provide finer labels like "刚刚活跃"
-- Cross-run new-job flag (`is_new`): every job carries a boolean marking whether it is new to this run (also shown as 🆕 in the terminal); the baseline defaults to the most recent prior result with the same keyword and city whose filename date is before today; multiple runs on the same day fold into one round; use `--diff-base` to override
+- Cross-run new-job flag (`is_new`): every job carries a boolean marking whether it is new to this run (also shown as 🆕 in the terminal); the baseline defaults to the most recent prior result with the same keyword, city, and company filter whose filename date is before today; runs without `--company` still compare against older files that have no company filter; multiple runs on the same day fold into one round; use `--diff-base` to override
+- Local company filter (`--company`): after scraping, keep jobs whose `boss_name` contains the given name; the search request is unchanged and no extra request is sent
 - Dual JSON / CSV output
 - Detail-page JD scraping + skill analysis
 - Aggregated summary + copy-paste prompt after scraping
@@ -175,6 +176,7 @@ python3 scripts/job_summary.py --top 15
 | Parameter | Description |
 |-----------|-------------|
 | `--keyword` | Search keyword (default "AI Agent") |
+| `--company` | Locally filter scraped jobs by company name (`boss_name` substring; split several companies on comma or ideographic enumeration comma; case-insensitive). Does not change the search URL and sends no extra request. See below |
 | `--city` | City (Chinese name or 9-digit code, default Shanghai). **Supports cities nationwide** (300+, incl. tier-3/4/5); city codes auto-sync from BOSS at runtime. See [`data/city_codes.json`](data/city_codes.json), or run `--list-cities`. An unrecognized city name now exits with an error instead of silently producing zero results |
 | `--list-cities [keyword]` | Print the supported city list, optional keyword filter, e.g. `--list-cities 江` |
 | `--pages` | Number of pages (max 10) |
@@ -183,7 +185,7 @@ python3 scripts/job_summary.py --top 15
 | `--no-detail` | Do not scrape detail pages |
 | `--analysis` | Analysis report |
 | `--merge FILE` | Merge existing data (deduped by job_id) |
-| `--diff-base FILE` | Explicit baseline file for `is_new` (defaults to the most recent prior result with the same keyword and city whose filename date is before today; with no baseline, all jobs are treated as new) |
+| `--diff-base FILE` | Explicit baseline file for `is_new` (defaults to the most recent prior result with the same keyword, city, and company filter whose filename date is before today; with no baseline, all jobs are treated as new) |
 | `--allow-dom-fallback` | Allow DOM extraction fallback when the API has no data; off by default, salaries may be unreliable |
 | `--check` | Environment check (CDP + deps + login state) |
 | `--smoke-test` | Run one real Chrome/CDP BOSS search API smoke test, writes no result files |
@@ -202,6 +204,18 @@ python3 scripts/job_summary.py --top 15
 | `--cdp-port` | CDP port (default 9222) |
 | `--scale/--salary/--experience/--degree` | Filters |
 
+`--company` is local post-processing. It does not change the search URL and does not send any extra request. The matched field is `boss_name` on list rows (the joblist response's `brandName`; detail rows fall back to `company`). Matching is a **case-insensitive substring**. Separate several companies with `,`, `，`, or `、`; a job is kept when any fragment matches. Duplicate fragments are collapsed case-insensitively.
+
+The filter runs after `--merge` and before detail scraping and `--analysis`: merged history is narrowed to the same companies, details are fetched only for the kept jobs, and the analysis report counts only those jobs. With `--input` and no `--output`, the filter stays in memory and does not rewrite the source file. A file this run scraped, or an explicit `--output`, is replaced wholesale by the filtered set (dropped companies are not merged back in) and records `company_filter`. The automatic `is_new` baseline matches keyword, city, and the normalized `company_filter` (case, order, and separator do not matter). Older files that lack the field count as "no company filter", so a run without `--company` still diffs the way it did before. An explicit `--diff-base` skips that automatic match. The per-job log printed during capture is still the full list; the filtered count is printed after capture finishes.
+
+```bash
+# Keep only the target companies after scraping
+python3 scripts/boss_cdp_raw.py --keyword "Java" --city 上海 --pages 3 --company "字节跳动,阿里巴巴" --analysis
+
+# Re-analyze an existing JSON by company without rewriting it
+python3 scripts/boss_cdp_raw.py --input ~/.boss-zhipin-scraper/job-result/boss_jobs_20260609_1200.json --company SHEIN --analysis --no-detail
+```
+
 ## Post-Scrape Summary & Prompt
 
 `scripts/job_summary.py` only reads the already-scraped `boss_jobs_*.json` and `boss_details_*.json`, does simple aggregation, and produces a copy-paste prompt. It never reads your local résumé file, pulls in no PDF dependency, and never scores a person against a job.
@@ -218,6 +232,9 @@ python3 scripts/job_summary.py \
 
 # Only emit the prompt
 python3 scripts/job_summary.py --prompt-only
+
+# Filter by company name before summarizing (same rules as the scraper --company; local only)
+python3 scripts/job_summary.py --company "字节跳动,SHEIN"
 ```
 
 After installing the package you can also use the entry command:
