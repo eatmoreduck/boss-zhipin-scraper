@@ -348,6 +348,12 @@ MIT
 
 - [LINUX DO](https://linux.do/) — 真诚、友善、充满活力的技术社区，本项目认可并推荐。
 
+## 作者
+
+多吃鸭 eatmoreduck — 上海风控架构师，10 年全栈、7 年风控研发。
+
+[主页](https://www.eatmoreduck.com) · [博客](https://blog.xiaohuangyu.space) · [X](https://x.com/eatmoreduck98)
+
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/chart?repos=eatmoreduck/boss-zhipin-scraper&type=date&legend=top-left&sealed_token=linAWksW9v7s0YEw83L89xbRzD4QWaJWxKrQHvkJBmx9xwMH8PseUKUQC9QAcRYaBFK1jBA_Mod4Vs8qH9A47spODANKwiVWieL3CxxQ3f9ZLqHYRwzTiA)](https://www.star-history.com/?type=date&repos=eatmoreduck%2Fboss-zhipin-scraper)

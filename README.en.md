@@ -347,6 +347,12 @@ Every line of this project was written by AI agents burning tokens — so a tip 
 
 - [LINUX DO](https://linux.do/) — A sincere, friendly, and vibrant tech community. This project endorses and recommends it.
 
+## Author
+
+多吃鸭 eatmoreduck — Risk-control architect in Shanghai; 10 years full-stack, 7 years in risk-control engineering.
+
+[Homepage](https://www.eatmoreduck.com) · [Blog](https://blog.xiaohuangyu.space) · [X](https://x.com/eatmoreduck98)
+
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/chart?repos=eatmoreduck/boss-zhipin-scraper&type=date&legend=top-left&sealed_token=linAWksW9v7s0YEw83L89xbRzD4QWaJWxKrQHvkJBmx9xwMH8PseUKUQC9QAcRYaBFK1jBA_Mod4Vs8qH9A47spODANKwiVWieL3CxxQ3f9ZLqHYRwzTiA)](https://www.star-history.com/?type=date&repos=eatmoreduck%2Fboss-zhipin-scraper)
