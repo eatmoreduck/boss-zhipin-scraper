@@ -26,6 +26,7 @@
 - 删除死代码：`FETCH_API_JS_TEMPLATE`、`build_login_probe_url`、`parse_api_jobs_eval_value`、`should_use_dom_fallback`；`CDPSession` 新增事件缓冲与 `drain_events`；测试从 92 增至 96 个
 
 ### 新增
+- 新增 `--position` 职位类目筛选（如 `--position 100101` 限定 Java，逗号分隔可多职类），并外置全量职类码表 `data/position_codes.json`：同步自 BOSS 官方职类树接口（21 大类 / 118 二级类目 / 848 个职位、共 987 个编码，源接口与抓取日期记于 `_meta`）；README 双语参数表与目录结构、SKILL.md 筛选参数同步更新，附码表结构防回归单测
 - 抓取结果跨轮对比，标记本次新增岗位（#88）：输出 JSON/CSV 中每条岗位新增 `is_new` 布尔字段（终端列表同步以 🆕 标记），表示「该岗位不在历史基准中」。基准自动选取规则：同关键词+同城市、**文件名日期早于本轮**的最近一份结果（同一天多轮抓取折叠为一轮，避免和几分钟前的自己 diff 出翻页抖动噪音）；找不到同关键词历史基准时全体视为新增并在终端明示；`--diff-base <path>` 可显式指定基准文件。纯本地后处理，零额外请求。（#50 反馈的「搜索结果重复」由此缓解）
 
 - macOS 的 `--setup-chrome` 新增 Chromium 自动探测：未安装 Google Chrome 但存在 `/Applications/Chromium.app` 时，自动启动 Chromium；`--copy-login-state` 也会使用与所选浏览器匹配的 profile 目录。（#46）

@@ -24,6 +24,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 
 SCRIPT_PATH = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "boss_cdp_raw.py"
+POSITION_TABLE_PATH = pathlib.Path(__file__).resolve().parents[1] / "data" / "position_codes.json"
 
 
 def load_module():
@@ -211,6 +212,56 @@ class ChromeSetupTests(unittest.TestCase):
         for name, code in old_builtin.items():
             self.assertEqual(name_to_code.get(name), code,
                              f"原内置城市 {name}={code} 在新码表中缺失或码值不一致")
+
+    # ----- 本地静态职类码表（data/position_codes.json）-----
+
+    def _load_position_table(self):
+        with open(POSITION_TABLE_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_position_table_loads_and_valid(self):
+        """职类码表能加载：三层结构完整、编码全为数字字符串、数量与 _meta 一致且不重复。"""
+        table = self._load_position_table()
+        meta = table.get("_meta", {})
+        self.assertEqual(
+            meta.get("source"),
+            "https://www.zhipin.com/wapi/zpCommon/data/position.json")
+
+        categories = 0
+        leaf_codes = []
+        for cat_name, cat in table.items():
+            if cat_name == "_meta":
+                continue
+            categories += 1
+            self.assertIsInstance(cat, dict, f"大类 {cat_name} 应为字典")
+            self.assertTrue(cat["code"].isdigit(), f"大类码应为数字字符串: {cat_name}")
+            for sub_name, sub in cat.items():
+                if sub_name == "code":
+                    continue
+                self.assertIsInstance(sub, dict, f"二级类目 {sub_name} 应为字典")
+                self.assertTrue(sub["code"].isdigit(), f"二级码应为数字字符串: {sub_name}")
+                for pos_name, pos_code in sub.items():
+                    if pos_name == "code":
+                        continue
+                    self.assertIsInstance(pos_code, str)
+                    self.assertTrue(pos_code.isdigit(),
+                                    f"职位码应为数字字符串: {pos_name}={pos_code!r}")
+                    leaf_codes.append(pos_code)
+
+        self.assertGreater(categories, 15, "职类大类应超过 15 个")
+        self.assertEqual(categories, meta.get("categories"))
+        self.assertEqual(len(leaf_codes), meta.get("leaf_positions"))
+        self.assertEqual(len(set(leaf_codes)), len(leaf_codes), "职位编码不应重复")
+
+    def test_position_table_contains_known_positions(self):
+        """防回归：关键职类码与已知一致（--position 文档示例依赖这些码）。"""
+        table = self._load_position_table()
+
+        self.assertEqual(table["技术"]["code"], "100000")
+        self.assertEqual(table["技术"]["后端开发"]["code"], "100100")
+        self.assertEqual(table["技术"]["后端开发"]["Java"], "100101")
+        self.assertEqual(table["技术"]["项目管理"]["项目经理/主管"], "100601")
+        self.assertEqual(table["技术"]["项目管理"]["软件项目经理"], "100608")
 
     # ----- resolve_city 三级查询链 -----
 

@@ -2898,6 +2898,7 @@ def main():
   --experience 105     经验要求 (108=在校生 102=应届生 101=经验不限 103=1年以内 104=1-3年 105=3-5年 106=5-10年 107=10年+)
   --degree 203         学历要求 (209=初中及以下 208=中专/中技 206=高中 202=大专 203=本科 204=硕士 205=博士)
   --industry 1001      行业 (1001=互联网 1002=电商 1003=金融 ...)
+  --position 100101    职位类目 (100101=Java 100102=C/C++ 100109=Python 100116=Golang ...；全表见 data/position_codes.json)
 
 城市支持中文: --city 上海  或代码: --city 101020100
 
@@ -2967,6 +2968,7 @@ def main():
     p.add_argument("--experience", default=None, help="经验要求代码")
     p.add_argument("--degree", default=None, help="学历要求代码")
     p.add_argument("--industry", default=None, help="行业代码")
+    p.add_argument("--position", default=None, help="职位类目代码 (100101=Java)")
 
     # 功能开关
     p.add_argument("--detail", action="store_true", default=True, help="抓取详情页 JD（默认开启）")
@@ -3062,7 +3064,7 @@ def main():
 
     # 收集筛选条件
     filters = {}
-    for key in ["scale", "stage", "salary", "experience", "degree", "industry"]:
+    for key in ["scale", "stage", "salary", "experience", "degree", "industry", "position"]:
         val = getattr(args, key)
         if val:
             filters[key] = val

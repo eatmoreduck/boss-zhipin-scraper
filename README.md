@@ -205,6 +205,7 @@ python3 scripts/job_summary.py --top 15
 | `--detail-output` | 详情输出路径（默认 `~/.boss-zhipin-scraper/job-result/`） |
 | `--cdp-port` | CDP 端口（默认 9222） |
 | `--scale/--salary/--experience/--degree` | 筛选条件 |
+| `--position` | 职位类目筛选（如 `100101`=Java，逗号分隔可多选）。全量职类码表（21 大类 / 118 二级类目 / 848 个职位，共 987 码，同步自 BOSS 官方职类树）见 [`data/position_codes.json`](data/position_codes.json) |
 
 `--company` 是本地后处理，不进入搜索 URL，也不新增网络请求。匹配字段是列表里的 `boss_name`（来自 joblist 响应的 `brandName`；详情记录回退到 `company`），规则是**不区分大小写的子串包含**。多家公司用 `,`、`，` 或 `、` 分隔，命中任一即保留；重复片段按大小写不敏感去重。
 
@@ -257,7 +258,8 @@ boss-zhipin-scraper/
 ├── LICENSE
 ├── pyproject.toml
 ├── data/
-│   └── city_codes.json   # 全量城市码表
+│   ├── city_codes.json      # 全量城市码表
+│   └── position_codes.json  # 全量职位类目码表
 ├── scripts/
 │   ├── boss_cdp_raw.py   # 抓取主脚本
 │   └── job_summary.py    # 抓取后摘要 + 提示词
