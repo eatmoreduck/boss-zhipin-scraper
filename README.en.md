@@ -349,7 +349,7 @@ Every line of this project was written by AI agents burning tokens — so a tip 
 
 ## Author
 
-多吃鸭 eatmoreduck — Risk-control architect in Shanghai; 10 years full-stack, 7 years in risk-control engineering.
+eatmoreduck 多吃鸭 — Risk-control architect in Shanghai; 10 years full-stack, 7 years in risk-control engineering.
 
 [Homepage](https://www.eatmoreduck.com) · [Blog](https://blog.xiaohuangyu.space) · [X](https://x.com/eatmoreduck98)
 

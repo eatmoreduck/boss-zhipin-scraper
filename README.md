@@ -350,7 +350,7 @@ MIT
 
 ## 作者
 
-多吃鸭 eatmoreduck — 上海风控架构师，10 年全栈、7 年风控研发。
+eatmoreduck 多吃鸭 — 上海风控架构师，10 年全栈、7 年风控研发。
 
 [主页](https://www.eatmoreduck.com) · [博客](https://blog.xiaohuangyu.space) · [X](https://x.com/eatmoreduck98)
 
