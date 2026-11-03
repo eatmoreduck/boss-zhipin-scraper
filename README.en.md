@@ -144,30 +144,46 @@ After installing, just say in a Hermes conversation: "Search BOSS Zhipin for AI 
 
 ## Use as a CLI tool
 
-You don't have to install it as a Skill — use it as a plain CLI:
+You don't have to install it as a Skill — use it as a plain CLI. Since v2.4.0 every version ships as a [GitHub Release](https://github.com/eatmoreduck/boss-zhipin-scraper/releases) with a directly installable wheel — no PyPI needed:
 
 ```bash
-# 1. Clone + install deps
+# Option A: install a tagged version straight from Git (no manual download; deps resolve from PyPI)
+pip install "git+https://github.com/eatmoreduck/boss-zhipin-scraper.git@v2.4.0"
+# uv users (recommended — gives you the boss-scraper / boss-summary commands globally):
+uv tool install "git+https://github.com/eatmoreduck/boss-zhipin-scraper.git@v2.4.0"
+
+# Option B: install the wheel from the Release page
+pip install https://github.com/eatmoreduck/boss-zhipin-scraper/releases/download/v2.4.0/boss_zhipin_scraper-2.4.0-py3-none-any.whl
+
+# Use the entry commands after installing
+boss-scraper --setup-chrome
+boss-scraper --check
+
+# Option C: clone the source and run it without installing
 git clone https://github.com/eatmoreduck/boss-zhipin-scraper.git
 cd boss-zhipin-scraper
 pip install -r requirements.txt
+```
 
-# 2. Start Chrome CDP (or use --setup-edge)
+The remaining steps are the same for the source clone:
+
+```bash
+# Start Chrome CDP (or use --setup-edge)
 python3 scripts/boss_cdp_raw.py --setup-chrome
 # macOS automatically selects an installed Google Chrome or /Applications/Chromium.app
 # First run won't copy your main Chrome session; log in to zhipin.com in the dedicated BOSS browser that pops up
 # setup waits for login to finish and confirms the API returns plaintext salaries
 
-# 3. Check the environment
+# Check the environment
 python3 scripts/boss_cdp_raw.py --check
 
 # Optional: real browser/API smoke test (writes no result files)
 python3 scripts/boss_cdp_raw.py --smoke-test
 
-# 4. Scrape
+# Scrape
 python3 scripts/boss_cdp_raw.py --keyword "AI Agent" --city 上海 --pages 3 --format csv --analysis
 
-# 5. Summary + prompt after scraping
+# Summary + prompt after scraping
 python3 scripts/job_summary.py --top 15
 ```
 

@@ -146,30 +146,46 @@ ls ~/.hermes/skills/data-science/boss-zhipin-scraper/data/city_codes.json
 
 ## 作为命令行工具使用
 
-不想装成 Skill 也可以直接当 CLI 用：
+不想装成 Skill 也可以直接当 CLI 用。自 v2.4.0 起每个版本都会发布 [GitHub Release](https://github.com/eatmoreduck/boss-zhipin-scraper/releases)（附可直接安装的 whl），无需上 PyPI：
 
 ```bash
-# 1. 克隆 + 安装依赖
+# 方式 A：从 Git 安装指定版本（无需手动下载文件；依赖会自动从 PyPI 解析）
+pip install "git+https://github.com/eatmoreduck/boss-zhipin-scraper.git@v2.4.0"
+# uv 用户（推荐，装完即有 boss-scraper / boss-summary 全局命令）：
+uv tool install "git+https://github.com/eatmoreduck/boss-zhipin-scraper.git@v2.4.0"
+
+# 方式 B：从 Release 页下载 whl 直装
+pip install https://github.com/eatmoreduck/boss-zhipin-scraper/releases/download/v2.4.0/boss_zhipin_scraper-2.4.0-py3-none-any.whl
+
+# 安装后直接使用入口命令
+boss-scraper --setup-chrome
+boss-scraper --check
+
+# 方式 C：克隆源码运行（不安装）
 git clone https://github.com/eatmoreduck/boss-zhipin-scraper.git
 cd boss-zhipin-scraper
 pip install -r requirements.txt
+```
 
-# 2. 启动 Chrome CDP（也可改用 --setup-edge）
+源码方式后续步骤相同：
+
+```bash
+# 启动 Chrome CDP（也可改用 --setup-edge）
 python3 scripts/boss_cdp_raw.py --setup-chrome
 # macOS 会自动选择已安装的 Google Chrome 或 /Applications/Chromium.app
 # 首次使用也不会复制主 Chrome 登录态；请在弹出的 BOSS 专用浏览器中登录 zhipin.com
 # setup 会等待登录完成，并确认接口能返回明文薪资
 
-# 3. 检查环境
+# 检查环境
 python3 scripts/boss_cdp_raw.py --check
 
 # 可选：真实浏览器/API smoke test（不写结果文件）
 python3 scripts/boss_cdp_raw.py --smoke-test
 
-# 4. 抓取
+# 抓取
 python3 scripts/boss_cdp_raw.py --keyword "AI Agent" --city 上海 --pages 3 --format csv --analysis
 
-# 5. 抓取后摘要和提示词
+# 抓取后摘要和提示词
 python3 scripts/job_summary.py --top 15
 ```
 

@@ -1,0 +1,64 @@
+# 发版流水线：push tag v* 触发，产出可安装的 whl/sdist 并发布 GitHub Release。
+# 不上 PyPI（包名含 boss-zhipin，公开市场有商标/合规风险）——主包经 GitHub 分发，
+# 依赖（requests / websocket-client）仍由 pip 从 PyPI 解析。
+# Release notes 自动抽取 CHANGELOG.md 对应版本段落，发版前须把「未发布」定版为 ## X.Y.Z (日期)。
+# 测试只在 3.13 单档跑：tag 指向的 commit 已在 PR 阶段过 3.10/3.13 双档门禁（见 ci.yml），
+# 且产物为纯 Python wheel（py3-none-any），与构建解释器版本无关。
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # 创建 Release 与上传资产
+
+jobs:
+  release:
+    name: build & release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # 与 ci.yml 相同的 pin 策略：setup-uv 须 pin 完整版本号
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Sync dependencies
+        # --locked：uv.lock 与 pyproject.toml 不一致时直接失败（发版前 bump 版本必须同步 uv lock）
+        run: uv sync --locked
+
+      - name: 语法自检（py_compile）
+        run: uv run python -m py_compile scripts/boss_cdp_raw.py scripts/job_summary.py
+
+      - name: 全量单测（发版门禁，与 CI 同款）
+        run: uv run python -m unittest tests.test_chrome_setup tests.test_job_summary
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: Extract release notes from CHANGELOG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            index($0, "## " ver) == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "Release $GITHUB_REF_NAME。CHANGELOG.md 未找到 \"## $VERSION\" 段落（发版前应把「未发布」定版），完整变更历史见仓库 CHANGELOG.md。" > notes.md
+          fi
+          echo "--- notes ---"
+          cat notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.whl dist/*.tar.gz \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md
