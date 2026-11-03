@@ -20,7 +20,7 @@ BOSS直聘职位抓取 + 分析 — 纯 CDP raw protocol
   uv run python3 scripts/boss_cdp_raw.py --version
 """
 
-__version__ = "2.3.1"
+__version__ = "2.4.0"
 
 import json
 import time

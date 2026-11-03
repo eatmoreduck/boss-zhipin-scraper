@@ -1,9 +1,9 @@
 # Changelog
 
-## 未发布
+## 2.4.0 (2026-11-03)
 
 ### 新增
-- GitHub Release 发布流水线（#107）：push tag `v*` 自动跑发版门禁（`uv sync --locked` + py_compile + 全量单测）→ `uv build` 产出 whl/sdist → 创建 GitHub Release 并附产物，release notes 自动抽取 CHANGELOG 对应版本段落。`package-skill.sh bump` 现同步更新 `pyproject.toml` 与 README 双语标题版本（并提醒 `uv lock`），发版时四处版本号精确一致（一致性门禁从两处加严到三处）。主包经 GitHub 分发不上 PyPI（包名含 boss-zhipin，规避公开市场商标/合规风险），依赖仍由 pip 从 PyPI 解析；README 双语新增 pip/uv 直接安装说明（git+tag、Release whl、`uv tool install`）
+- GitHub Release 发布流水线（#107）：push tag `v*` 自动跑发版门禁（`uv sync --locked` + py_compile + 全量单测）→ `uv build` 产出 whl/sdist → 创建 GitHub Release 并附产物，release notes 自动抽取 CHANGELOG 对应版本段落。`package-skill.sh bump` 现同步更新 `pyproject.toml` 与 README 双语标题版本（并提醒 `uv lock`），发版时四处版本号精确一致（一致性门禁从两处加严到三处）。主包经 GitHub 分发不上 PyPI（包名含 boss-zhipin，规避公开市场商标/合规风险），依赖仍由 pip 从 PyPI 解析；README 双语新增 pip/uv 直接安装说明（git+tag、Release whl、`uv tool install`）。本版本为首个经流水线发布的版本
 - `--company` 本地公司名过滤（#97 方案 2）：对已抓取结果的 `boss_name`（joblist 的 `brandName`）做不区分大小写的子串匹配，英文逗号、中文逗号或顿号分隔多家，命中任一即保留。纯本地后处理，不改搜索请求、零额外请求。过滤发生在 `--merge` 之后、详情抓取和 `--analysis` 之前，因此详情只抓保留下来的岗位；`--input` 未加 `--output` 时不改写原文件。结果 JSON 写入 `company_filter`。`is_new` 自动基准在同关键词同城市之外，还要求公司过滤条件一致（大小写与顺序不敏感；旧文件没有该字段视为未过滤），避免不同公司维度互 diff。`--diff-base` 仍可显式指定基准。`job_summary.py` 接受同一个 `--company`，摘要和提示词会带上公司范围
 
 ### 变更
