@@ -185,7 +185,7 @@ python3 scripts/job_summary.py --top 15
 | `--no-detail` | Do not scrape detail pages |
 | `--analysis` | Analysis report |
 | `--merge FILE` | Merge existing data (deduped by job_id) |
-| `--diff-base FILE` | Explicit baseline file for `is_new` (defaults to the most recent prior result with the same keyword, city, and company filter whose filename date is before today; with no baseline, all jobs are treated as new) |
+| `--diff-base FILE` | Explicit baseline file for `is_new` (defaults to the most recent prior result with the same keyword, city, and company filter whose filename date is before today; with no baseline, all jobs are treated as new; a missing or corrupt baseline file aborts the run instead of silently diffing against an empty baseline) |
 | `--allow-dom-fallback` | Allow DOM extraction fallback when the API has no data; off by default, salaries may be unreliable |
 | `--check` | Environment check (CDP + deps + login state) |
 | `--smoke-test` | Run one real Chrome/CDP BOSS search API smoke test, writes no result files |

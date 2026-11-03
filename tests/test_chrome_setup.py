@@ -1,5 +1,6 @@
 import importlib.util
 import csv
+import hashlib
 import io
 import json
 import os
@@ -2059,11 +2060,21 @@ class IsNewDiffTests(unittest.TestCase):
             path = self._write_result(tmp, "boss_jobs_20260916_1606.json", "Java", "上海", ["a", "b"])
             self.assertEqual(module.load_base_ids(path), {"a", "b"})
 
+            # 合法文件但没有任何已见岗位:空集,不是失败(#90)
+            empty = self._write_result(tmp, "boss_jobs_20260915_1606.json", "Java", "上海", [])
+            self.assertEqual(module.load_base_ids(empty), set())
+
             broken = os.path.join(tmp, "broken.json")
             with open(broken, "w") as f:
                 f.write("{oops")
-            self.assertEqual(module.load_base_ids(broken), set())
-            self.assertEqual(module.load_base_ids(os.path.join(tmp, "nope.json")), set())
+            # 失败返回 None,与「合法空基准」区分,调用方据此告警/终止(#90)
+            self.assertIsNone(module.load_base_ids(broken))
+            self.assertIsNone(module.load_base_ids(os.path.join(tmp, "nope.json")))
+            # 不是岗位结果结构(dict + jobs 列表)同样视为失败
+            not_result = os.path.join(tmp, "not_result.json")
+            with open(not_result, "w") as f:
+                json.dump([{"job_id": "x"}], f)
+            self.assertIsNone(module.load_base_ids(not_result))
 
 
 class CompanyFilterTests(unittest.TestCase):
@@ -2277,6 +2288,74 @@ class CompanyFilterTests(unittest.TestCase):
         self.assertNotIn("阿里", navigations[0]["url"])
         self.assertNotIn("company_filter", saved)
         self.assertEqual(len(saved["jobs"]), 2)
+
+    def test_scrape_list_explicit_diff_base_failure_exits_before_scraping(self):
+        """--diff-base 显式指定的基准读不出来时终止(#90),不静默按空基准继续。"""
+        module = load_module()
+        cdp = FakeCaptureCDP(pending_batches=[], responses={})
+        module._request_counter = 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = str(pathlib.Path(tmp) / "jobs.json")
+            missing_base = str(pathlib.Path(tmp) / "nope_base.json")
+            with mock.patch.object(module, "CDPSession", lambda port=9222: cdp), \
+                    mock.patch.object(module, "resolve_city",
+                                      return_value=("上海", "101020100")), \
+                    mock.patch.object(module, "find_diff_base") as find_base:
+                with redirect_stdout(io.StringIO()) as output:
+                    with self.assertRaises(SystemExit) as exit_context:
+                        module.scrape_list(
+                            "Java", "上海", 1, {}, output_path,
+                            cdp_port=9333, diff_base=missing_base,
+                        )
+
+            self.assertEqual(exit_context.exception.code, 1)
+            self.assertIn("无法读取 --diff-base", output.getvalue())
+            self.assertIn(missing_base, output.getvalue())
+            # 显式路径不应回退到自动选取
+            find_base.assert_not_called()
+            # 终止发生在导航之前,且不落盘结果
+            self.assertEqual(
+                [params for method, params in cdp.sent if method == "Page.navigate"],
+                [], "基准加载失败应在任何导航前终止",
+            )
+            self.assertFalse(os.path.exists(output_path))
+
+    def test_scrape_list_explicit_diff_base_valid_file_proceeds(self):
+        """--diff-base 指向合法基准时行为不变:照常对比并继续抓取。"""
+        module = load_module()
+        page = {"code": 0, "zpData": {"hasMore": False, "jobList": [
+            {"jobName": "A", "salaryDesc": "10K", "encryptJobId": "e1", "brandName": "字节跳动"},
+        ]}}
+        cdp = FakeCaptureCDP(
+            pending_batches=[make_joblist_events("r1")],
+            responses={"r1": json.dumps(page)},
+        )
+        module._request_counter = 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = str(pathlib.Path(tmp) / "jobs.json")
+            # 真实结果文件里的 job_id 是 md5(job_link or title)[:16];
+            # map_api_job 会用 encryptJobId 拼出 job_link
+            base_job_id = hashlib.md5(
+                "https://www.zhipin.com/job_detail/e1.html".encode()
+            ).hexdigest()[:16]
+            base_path = self._write_result(
+                tmp, "boss_jobs_20260101_0900.json", "Java", "上海", [base_job_id])
+            with mock.patch.object(module, "CDPSession", lambda port=9222: cdp), \
+                    mock.patch.object(module, "resolve_city",
+                                      return_value=("上海", "101020100")), \
+                    mock.patch("time.sleep", lambda s: None), \
+                    mock.patch.object(module, "find_diff_base") as find_base:
+                with redirect_stdout(io.StringIO()) as output:
+                    result = module.scrape_list(
+                        "Java", "上海", 1, {}, output_path,
+                        cdp_port=9333, diff_base=base_path,
+                    )
+
+            find_base.assert_not_called()
+            self.assertIn("其中已见 1 条", output.getvalue())
+            self.assertEqual(result["jobs"][0]["is_new"], False)
 
     def test_input_company_filter_does_not_rewrite_source_and_scopes_analysis(self):
         module = load_module()
