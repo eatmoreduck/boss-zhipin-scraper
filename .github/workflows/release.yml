@@ -1,64 +1,133 @@
-# 发版流水线：push tag v* 触发，产出可安装的 whl/sdist 并发布 GitHub Release。
+# 发版构建与发布：两条触发路径汇入同一流程，产出 whl/sdist 并发布 GitHub Release。
+#
+#   路径 A（自动，配合 make-release.yml）：release PR 由人合并进 master，
+#         本工作流从提交首行识别 chore(release): x.y.z → 自动补打 tag → 构建 → 发布。
+#   路径 B（手动）：直接 git push tag v*（如 v2.4.0 的首发方式），直接构建发布。
+#
+# 注意事件链设计：GITHUB_TOKEN 造成的事件（开 PR / 推 tag）会被 GitHub 的防递归
+# 机制吞掉、不触发其他工作流，因此本工作流必须由「人」的动作触发（合并 push /
+# 手动推 tag），tag 的创建与 Release 的发布都在本工作流内部用 GITHUB_TOKEN 完成，
+# 不再链式依赖下一个工作流。
+#
 # 不上 PyPI（包名含 boss-zhipin，公开市场有商标/合规风险）——主包经 GitHub 分发，
 # 依赖（requests / websocket-client）仍由 pip 从 PyPI 解析。
-# Release notes 自动抽取 CHANGELOG.md 对应版本段落，发版前须把「未发布」定版为 ## X.Y.Z (日期)。
-# 测试只在 3.13 单档跑：tag 指向的 commit 已在 PR 阶段过 3.10/3.13 双档门禁（见 ci.yml），
-# 且产物为纯 Python wheel（py3-none-any），与构建解释器版本无关。
+# Release notes 自动抽取 CHANGELOG.md 对应版本段落。
 name: Release
 
 on:
   push:
+    branches: [master]
     tags: ["v*"]
 
 permissions:
-  contents: write # 创建 Release 与上传资产
+  contents: write # 打 tag、创建 Release 与上传资产
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
     name: build & release
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    if: ${{ !cancelled() && success() }}
     steps:
       - uses: actions/checkout@v7.0.1
 
-      # 与 ci.yml 相同的 pin 策略：setup-uv 须 pin 完整版本号
+      # 解析本次要发的版本号：
+      #   tag 触发  → 从 ref 名取（v2.4.0 → 2.4.0）
+      #   master 触发 → 从提交首行取 chore(release): x.y.z（squash 合并标题含 (#PR号) 后缀）
+      # 非发版提交（普通 master push）标记 skip 后续全部跳过。
+      - name: Resolve release version
+        id: version
+        env:
+          HEAD_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(printf '%s' "$HEAD_MSG" | head -1 | grep -oE 'chore\(release\): [0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)"
+          fi
+          if [ -z "$VERSION" ]; then
+            echo "非发版事件，跳过"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "本次发布: v$VERSION"
+
+      - name: Skip duplicate release
+        id: dupcheck
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          if git ls-remote --tags origin "refs/tags/v${{ steps.version.outputs.version }}" | grep -q .; then
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              echo "❌ tag v${{ steps.version.outputs.version }} 已存在，与本次 tag 触发矛盾，拒绝重复发布" >&2
+              exit 1
+            fi
+            echo "tag 已存在（历史发版提交重放），跳过"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install uv
+        if: steps.version.outputs.skip != 'true' && steps.dupcheck.outputs.skip != 'true'
         uses: astral-sh/setup-uv@v10.1.0
         with:
           python-version: "3.13"
 
       - name: Sync dependencies
+        if: steps.version.outputs.skip != 'true' && steps.dupcheck.outputs.skip != 'true'
         # --locked：uv.lock 与 pyproject.toml 不一致时直接失败（发版前 bump 版本必须同步 uv lock）
         run: uv sync --locked
 
       - name: 语法自检（py_compile）
+        if: steps.version.outputs.skip != 'true' && steps.dupcheck.outputs.skip != 'true'
         run: uv run python -m py_compile scripts/boss_cdp_raw.py scripts/job_summary.py
 
       - name: 全量单测（发版门禁，与 CI 同款）
+        if: steps.version.outputs.skip != 'true' && steps.dupcheck.outputs.skip != 'true'
         run: uv run python -m unittest tests.test_chrome_setup tests.test_job_summary
 
+      # master 路径在此补打 tag（tag 路径则复用已存在的 tag，--verify-tag 校验）
+      - name: Create tag (master path)
+        if: steps.version.outputs.skip != 'true' && steps.dupcheck.outputs.skip != 'true' && github.ref == 'refs/heads/master'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "v${{ steps.version.outputs.version }}" "$GITHUB_SHA"
+          git push origin "v${{ steps.version.outputs.version }}"
+
       - name: Build sdist + wheel
-        run: uv build
+        if: steps.version.outputs.skip != 'true' && steps.dupcheck.outputs.skip != 'true'
+        run: |
+          uv build
+          # 额外附一份稳定文件名的 wheel：releases/latest/download/ 不认带版本号的文件名，
+          # pip 安装时以 wheel 元数据为准（实测通过），供「永远装最新版」的固定 URL 使用
+          cp dist/boss_zhipin_scraper-*.whl dist/boss_zhipin_scraper-latest-py3-none-any.whl
+          ls -la dist/
 
       - name: Extract release notes from CHANGELOG
+        if: steps.version.outputs.skip != 'true' && steps.dupcheck.outputs.skip != 'true'
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ steps.version.outputs.version }}"
           awk -v ver="$VERSION" '
             index($0, "## " ver) == 1 { found = 1; next }
             found && /^## / { exit }
             found { print }
           ' CHANGELOG.md > notes.md
           if [ ! -s notes.md ]; then
-            echo "Release $GITHUB_REF_NAME。CHANGELOG.md 未找到 \"## $VERSION\" 段落（发版前应把「未发布」定版），完整变更历史见仓库 CHANGELOG.md。" > notes.md
+            echo "Release v$VERSION。CHANGELOG.md 未找到 \"## $VERSION\" 段落（发版前应把「未发布」定版），完整变更历史见仓库 CHANGELOG.md。" > notes.md
           fi
           echo "--- notes ---"
           cat notes.md
 
       - name: Create GitHub Release
+        if: steps.version.outputs.skip != 'true' && steps.dupcheck.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.whl dist/*.tar.gz \
+          gh release create "v${{ steps.version.outputs.version }}" dist/*.whl dist/*.tar.gz \
             --verify-tag \
-            --title "$GITHUB_REF_NAME" \
+            --title "v${{ steps.version.outputs.version }}" \
             --notes-file notes.md

@@ -11,6 +11,14 @@
 
 set -euo pipefail
 
+# 可移植 sed -i：macOS(BSD) 需要空串后缀参数，Linux(GNU) 不需要。
+# 在 make-release workflow（ubuntu）与本机（macOS）上都要能跑。
+if sed --version >/dev/null 2>&1; then
+  SED_I=(-i)
+else
+  SED_I=(-i "")
+fi
+
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="$REPO_ROOT/dist"
 SKILL_MD="$REPO_ROOT/SKILL.md"
@@ -42,14 +50,14 @@ bump_patch() {
 
 set_version() {
   local ver="$1"
-  sed -i '' "s/^version:.*/version: $ver/" "$SKILL_MD"
-  sed -i '' "s/^__version__ = .*/__version__ = \"$ver\"/" "$RAW_PY"
+  sed "${SED_I[@]}" "s/^version:.*/version: $ver/" "$SKILL_MD"
+  sed "${SED_I[@]}" "s/^__version__ = .*/__version__ = \"$ver\"/" "$RAW_PY"
   # 发布产物的版本号以 pyproject 为准（#107：whl 经 GitHub Release 分发，不能再漂移）
-  sed -i '' "s/^version = \".*\"/version = \"$ver\"/" "$PYPROJECT"
+  sed "${SED_I[@]}" "s/^version = \".*\"/version = \"$ver\"/" "$PYPROJECT"
   # README 双语标题只带 major.minor 徽标，与 VersionConsistencyTests 的宽松比较一致
   local mm="${ver%.*}"
-  sed -i '' -E "s/^(# BOSS[^#]* v)[0-9]+\\.[0-9]+/\\1$mm/" "$README_ZH"
-  sed -i '' -E "s/^(# BOSS[^#]* v)[0-9]+\\.[0-9]+/\\1$mm/" "$README_EN"
+  sed "${SED_I[@]}" -E "s/^(# BOSS[^#]* v)[0-9]+\\.[0-9]+/\\1$mm/" "$README_ZH"
+  sed "${SED_I[@]}" -E "s/^(# BOSS[^#]* v)[0-9]+\\.[0-9]+/\\1$mm/" "$README_EN"
   echo "提醒: pyproject 版本已更新，请运行 'uv lock' 同步 uv.lock，否则 uv sync --locked 会失败"
 }
 
