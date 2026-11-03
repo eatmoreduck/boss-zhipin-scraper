@@ -78,7 +78,7 @@ HOT_CITY_URL = "https://www.zhipin.com/wapi/zpgeek/search/job/hot/city.json"
 CITY_GROUP_URL = "https://www.zhipin.com/wapi/zpCommon/data/cityGroup.json"
 
 # 请求频率保护
-MAX_PAGES = 10          # 单次最大页数
+MAX_PAGES = 20          # 单次最大页数（#94：上限放宽，默认页数仍为 3）
 MAX_API_REQUESTS = 500  # 单次最大 API 请求数
 
 

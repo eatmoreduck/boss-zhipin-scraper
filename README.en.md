@@ -179,7 +179,7 @@ python3 scripts/job_summary.py --top 15
 | `--company` | Locally filter scraped jobs by company name (`boss_name` substring; split several companies on comma or ideographic enumeration comma; case-insensitive). Does not change the search URL and sends no extra request. See below |
 | `--city` | City (Chinese name or 9-digit code, default Shanghai). **Supports cities nationwide** (300+, incl. tier-3/4/5); city codes auto-sync from BOSS at runtime. See [`data/city_codes.json`](data/city_codes.json), or run `--list-cities`. An unrecognized city name now exits with an error instead of silently producing zero results |
 | `--list-cities [keyword]` | Print the supported city list, optional keyword filter, e.g. `--list-cities 江` |
-| `--pages` | Number of pages (max 10) |
+| `--pages` | Number of pages (max 20) |
 | `--format` | json / csv; csv also exports list and detail CSVs |
 | `--detail` | Scrape detail-page JD (on by default) |
 | `--no-detail` | Do not scrape detail pages |

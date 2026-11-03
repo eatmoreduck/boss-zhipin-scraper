@@ -313,6 +313,33 @@ class ChromeSetupTests(unittest.TestCase):
         self.assertIn("无法解析城市", output.getvalue())
         login_probe.assert_not_called()
 
+    def test_main_clamps_pages_to_cap(self):
+        """--pages 超过上限时钳制到 MAX_PAGES（#94：上限 20），并打印调整告警。"""
+        module = load_module()
+        captured = {}
+
+        def fake_scrape_list(keyword, city, pages, filters, output, **kwargs):
+            captured["pages"] = pages
+            return {"jobs": [], "total": 0}
+
+        with mock.patch.object(sys, "argv", [
+                "boss_cdp_raw.py", "--keyword", "Java", "--pages", "99",
+        ]), \
+             mock.patch.object(module, "require_runtime_dependencies",
+                               return_value=True), \
+             mock.patch.object(module, "resolve_city",
+                               return_value=("上海", "101020100")), \
+             mock.patch.object(module, "scrape_list",
+                               side_effect=fake_scrape_list), \
+             redirect_stdout(io.StringIO()) as output:
+            module.main()
+
+        self.assertEqual(module.MAX_PAGES, 20,
+                         "单关键词页数上限应为 20（#94），勿回退到 10")
+        self.assertEqual(captured["pages"], 20,
+                         "超限页数应被钳制到 MAX_PAGES 再传入 scrape_list")
+        self.assertIn("已自动调整为 20", output.getvalue())
+
     def test_resolve_city_empty_input(self):
         module = load_module()
 

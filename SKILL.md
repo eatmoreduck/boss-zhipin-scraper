@@ -161,7 +161,7 @@ python3 "$SUMMARY_PATH" \
 | `--keyword` | AI Agent | 搜索关键词 |
 | `--city` | 上海 | 城市名（中文）或 9 位代码；没传时默认上海，无法识别的城市名会报错退出 |
 | `--company` | - | 按公司名本地过滤（`boss_name` 子串，逗号或顿号分隔多家，不区分大小写）。不改搜索请求；过滤在 `--merge` 之后、详情与分析之前。`is_new` 自动基准同时要求公司过滤条件一致。`job_summary.py` 接受同一参数 |
-| `--pages` | 3 | 抓取页数（上限 10，每页 30 条） |
+| `--pages` | 3 | 抓取页数（上限 20，每页 15 条） |
 | `--output` | ~/.boss-zhipin-scraper/job-result/... | 列表输出路径 |
 | `--detail-output` | ~/.boss-zhipin-scraper/job-result/... | 详情输出路径 |
 | `--format` | json | 输出格式: json / csv；csv 同时导出列表和详情 CSV |
@@ -267,7 +267,7 @@ python3 "$SCRIPT_PATH" --setup-chrome --reset-chrome-profile --cdp-port 9222
 ## 注意事项
 
 - 仅用于个人求职研究
-- 单次最多 10 页（300 条），防封号
+- 单次最多 20 页（300 条），防封号
 - 翻页间隔 12-22 秒随机延迟，3 页约 1 分钟
 - 详情页每条 10-25 秒，10 条约 3-5 分钟
 - BOSS直聘可能更新 API 路径，失效时需更新脚本中 `API_JOB_LIST_PATH` 常量
