@@ -187,7 +187,7 @@ python3 scripts/job_summary.py --top 15
 | `--no-detail` | 不抓取详情页 |
 | `--analysis` | 分析报告 |
 | `--merge FILE` | 合并已有数据（按 job_id 去重） |
-| `--diff-base FILE` | 指定 `is_new` 对比基准文件（默认自动取同关键词同城市、公司过滤条件一致、文件名日期早于本轮的最近一份结果；无基准时全体视为新增） |
+| `--diff-base FILE` | 指定 `is_new` 对比基准文件（默认自动取同关键词同城市、公司过滤条件一致、文件名日期早于本轮的最近一份结果；无基准时全体视为新增；文件缺失或损坏时直接报错终止，不会静默按空基准对比） |
 | `--allow-dom-fallback` | API 无数据时允许降级 DOM 提取；默认关闭，薪资可能不可信 |
 | `--check` | 环境检查（CDP + 依赖 + 登录态） |
 | `--smoke-test` | 用真实 Chrome/CDP 跑一次 BOSS 搜索 API smoke test，不写结果文件 |

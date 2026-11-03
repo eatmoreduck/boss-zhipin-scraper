@@ -1603,16 +1603,22 @@ def find_diff_base(result_dir, keyword, city, now=None, company_filter=""):
 
 
 def load_base_ids(path):
-    """读取基准文件中已见岗位的 job_id 集合;文件缺失/损坏返回空集。"""
+    """读取基准文件中已见岗位的 job_id 集合。
+
+    文件缺失、JSON 损坏或不是岗位结果结构（dict 且 jobs 为 list）时返回
+    None，与「文件合法但没有已见岗位」的空集区分，供调用方决定告警或
+    终止（#90：显式 --diff-base 失败不得静默降级为空基准）。
+    """
     try:
         with open(os.path.expanduser(path), encoding="utf-8") as f:
             payload = json.load(f)
     except (json.JSONDecodeError, OSError, ValueError):
-        return set()
-    jobs = payload.get("jobs", []) if isinstance(payload, dict) else []
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("jobs"), list):
+        return None
     return {
         job.get("job_id")
-        for job in jobs
+        for job in payload["jobs"]
         if isinstance(job, dict) and job.get("job_id")
     }
 
@@ -1776,6 +1782,9 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
 
     # 选定 is_new 对比基准(#88):显式 --diff-base 优先,否则按规则自动选取。
     # 带 --company 时基准还要公司过滤条件一致(#97)。
+    # 显式指定的基准加载失败时直接终止(#90):显式是强意图,静默按空基准
+    # 继续会让整轮结果全部误标 is_new=true。
+    explicit_base = diff_base is not None
     if diff_base is None:
         diff_base = find_diff_base(
             os.path.dirname(output_path) or DEFAULT_RESULT_DIR,
@@ -1783,14 +1792,25 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
             city_name,
             company_filter=company_filter,
         )
+    base_ids = set()
     if diff_base:
-        base_ids = load_base_ids(diff_base)
-        base_dt = parse_result_file_time(diff_base)
-        base_desc = base_dt.strftime("%Y-%m-%d %H:%M") if base_dt else "指定文件"
-        print(f"📌 对比基准: {os.path.basename(diff_base)}({base_desc} 抓取),"
-              f"其中已见 {len(base_ids)} 条")
+        loaded_ids = load_base_ids(diff_base)
+        if loaded_ids is None:
+            if explicit_base:
+                print(f"❌ 无法读取 --diff-base 指定的基准文件: {diff_base}"
+                      "(文件不存在、JSON 损坏或不是岗位结果 JSON)。"
+                      "为避免整轮误标 is_new,本次抓取终止;请检查路径后重试")
+                sys.exit(1)
+            # 自动选取的基准在扫描与读取之间被移动/删除:罕见竞态,
+            # 按 #88「终端明示」约定回退为无基准。
+            print("⚠️ 自动选取的基准文件无法解析,本次全部视为新增(is_new=true)")
+        else:
+            base_ids = loaded_ids
+            base_dt = parse_result_file_time(diff_base)
+            base_desc = base_dt.strftime("%Y-%m-%d %H:%M") if base_dt else "指定文件"
+            print(f"📌 对比基准: {os.path.basename(diff_base)}({base_desc} 抓取),"
+                  f"其中已见 {len(base_ids)} 条")
     else:
-        base_ids = set()
         if company_needles:
             print("📌 无同关键词、同城市且公司过滤一致的历史基准,本次全部视为新增(is_new=true)")
         else:
