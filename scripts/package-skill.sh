@@ -15,6 +15,9 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="$REPO_ROOT/dist"
 SKILL_MD="$REPO_ROOT/SKILL.md"
 RAW_PY="$REPO_ROOT/scripts/boss_cdp_raw.py"
+PYPROJECT="$REPO_ROOT/pyproject.toml"
+README_ZH="$REPO_ROOT/README.md"
+README_EN="$REPO_ROOT/README.en.md"
 
 current_version() {
   grep -m1 '^version:' "$SKILL_MD" | sed 's/version:[[:space:]]*//'
@@ -22,6 +25,10 @@ current_version() {
 
 version_in_raw_py() {
   grep -m1 '__version__' "$RAW_PY" | sed 's/.*"\(.*\)".*/\1/'
+}
+
+version_in_pyproject() {
+  grep -m1 '^version' "$PYPROJECT" | sed 's/.*"\(.*\)".*/\1/'
 }
 
 bump_patch() {
@@ -37,6 +44,13 @@ set_version() {
   local ver="$1"
   sed -i '' "s/^version:.*/version: $ver/" "$SKILL_MD"
   sed -i '' "s/^__version__ = .*/__version__ = \"$ver\"/" "$RAW_PY"
+  # 发布产物的版本号以 pyproject 为准（#107：whl 经 GitHub Release 分发，不能再漂移）
+  sed -i '' "s/^version = \".*\"/version = \"$ver\"/" "$PYPROJECT"
+  # README 双语标题只带 major.minor 徽标，与 VersionConsistencyTests 的宽松比较一致
+  local mm="${ver%.*}"
+  sed -i '' -E "s/^(# BOSS[^#]* v)[0-9]+\\.[0-9]+/\\1$mm/" "$README_ZH"
+  sed -i '' -E "s/^(# BOSS[^#]* v)[0-9]+\\.[0-9]+/\\1$mm/" "$README_EN"
+  echo "提醒: pyproject 版本已更新，请运行 'uv lock' 同步 uv.lock，否则 uv sync --locked 会失败"
 }
 
 MODE="${1:-pack}"
@@ -57,10 +71,15 @@ fi
 
 VERSION="$(current_version)"
 
-# Consistency gate: SKILL.md and the raw script must agree.
+# Consistency gate: SKILL.md、脚本与 pyproject 三处必须一致（#107）。
 RAW_VER="$(version_in_raw_py)"
 if [[ "$VERSION" != "$RAW_VER" ]]; then
   echo "ERROR: version mismatch SKILL.md=$VERSION vs boss_cdp_raw.py=$RAW_VER" >&2
+  exit 1
+fi
+PYPROJECT_VER="$(version_in_pyproject)"
+if [[ "$VERSION" != "$PYPROJECT_VER" ]]; then
+  echo "ERROR: version mismatch SKILL.md=$VERSION vs pyproject.toml=$PYPROJECT_VER" >&2
   exit 1
 fi
 
