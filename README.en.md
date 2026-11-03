@@ -130,6 +130,21 @@ The skill is published on [ClawHub](https://clawhub.ai), the skill registry of t
 npx clawhub@latest install @eatmoreduck/boss-zhipin-scraper
 ```
 
+### Option 6: Install as a Python package (pip / uv)
+
+Skip the skill form and use it as a plain CLI: install straight from a Git tag or the Release page (no PyPI — deps resolve from PyPI automatically). This gives you the `boss-scraper` / `boss-summary` commands:
+
+```bash
+# A pinned version (git tag)
+pip install "git+https://github.com/eatmoreduck/boss-zhipin-scraper.git@v2.4.0"
+# Always the latest release (fixed URL; version comes from the wheel metadata)
+pip install https://github.com/eatmoreduck/boss-zhipin-scraper/releases/latest/download/boss_zhipin_scraper-latest-py3-none-any.whl
+# uv (recommended, global commands)
+uv tool install "git+https://github.com/eatmoreduck/boss-zhipin-scraper.git@v2.4.0"
+```
+
+See [Use as a CLI tool](#use-as-a-cli-tool) below for full usage.
+
 ### Verify the installation
 
 ```bash
@@ -154,6 +169,8 @@ uv tool install "git+https://github.com/eatmoreduck/boss-zhipin-scraper.git@v2.4
 
 # Option B: install the wheel from the Release page
 pip install https://github.com/eatmoreduck/boss-zhipin-scraper/releases/download/v2.4.0/boss_zhipin_scraper-2.4.0-py3-none-any.whl
+# Or a fixed URL that always installs the latest release:
+pip install https://github.com/eatmoreduck/boss-zhipin-scraper/releases/latest/download/boss_zhipin_scraper-latest-py3-none-any.whl
 
 # Use the entry commands after installing
 boss-scraper --setup-chrome

@@ -132,6 +132,21 @@ npx skills add eatmoreduck/boss-zhipin-scraper
 npx clawhub@latest install @eatmoreduck/boss-zhipin-scraper
 ```
 
+### 方式 6：作为 Python 包安装（pip / uv）
+
+不装技能、当命令行工具用：直接从 Git tag 或 Release 页安装（不上 PyPI，依赖自动从 PyPI 解析），装完即有 `boss-scraper` / `boss-summary` 命令：
+
+```bash
+# 指定版本（git tag）
+pip install "git+https://github.com/eatmoreduck/boss-zhipin-scraper.git@v2.4.0"
+# 永远装最新 Release（固定 URL，版本以 wheel 元数据为准）
+pip install https://github.com/eatmoreduck/boss-zhipin-scraper/releases/latest/download/boss_zhipin_scraper-latest-py3-none-any.whl
+# uv（推荐，全局命令）
+uv tool install "git+https://github.com/eatmoreduck/boss-zhipin-scraper.git@v2.4.0"
+```
+
+完整用法见下文[「作为命令行工具使用」](#作为命令行工具使用)。
+
 ### 验证安装
 
 ```bash
@@ -156,6 +171,8 @@ uv tool install "git+https://github.com/eatmoreduck/boss-zhipin-scraper.git@v2.4
 
 # 方式 B：从 Release 页下载 whl 直装
 pip install https://github.com/eatmoreduck/boss-zhipin-scraper/releases/download/v2.4.0/boss_zhipin_scraper-2.4.0-py3-none-any.whl
+# 或固定 URL 永远装最新 Release：
+pip install https://github.com/eatmoreduck/boss-zhipin-scraper/releases/latest/download/boss_zhipin_scraper-latest-py3-none-any.whl
 
 # 安装后直接使用入口命令
 boss-scraper --setup-chrome

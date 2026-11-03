@@ -1,5 +1,10 @@
 # Changelog
 
+## 未发布
+
+### 新增
+- 一键发版工作流（#107 后续）：`make-release.yml`（Actions → Run workflow 填版本号）自动完成版本四处对齐 + `uv lock` + CHANGELOG 定版 + 全量单测，并推好 `release/vX.Y.Z` 分支给出开 PR 链接；`release.yml` 改为双路触发——release PR 合并进 master 时按提交首行识别 `chore(release): x.y.z` 自动补打 tag 并构建发布（手动 `git push tag v*` 的老路继续可用），发版手动动作只剩「开 PR 并合并」。事件链刻意不依赖 GITHUB_TOKEN 触发下游（GitHub 防递归会吞掉 bot 开的 PR/推的 tag，且本仓库分支保护对管理员也强制必需 check）。`release.yml` 现额外附稳定文件名的 `boss_zhipin_scraper-latest-py3-none-any.whl`，支持 `releases/latest/download/` 固定 URL 永远装最新版（pip 以 wheel 元数据识别版本，实测通过）。README 双语「安装」章节新增方式 6（pip / uv 直接安装），CLI 章节补 latest 固定 URL。`package-skill.sh` 的 `sed -i` 改为 BSD/GNU 双平台兼容（make-release 在 ubuntu 上复用该脚本）
+
 ## 2.4.0 (2026-11-03)
 
 ### 新增

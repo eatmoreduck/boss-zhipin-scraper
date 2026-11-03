@@ -1,0 +1,95 @@
+# 一键发版：workflow_dispatch 输入版本号，自动完成发版前的全部准备。
+#
+# 手动步骤只剩两步：
+#   1. Actions → Make Release → Run workflow（填版本号，如 2.5.0）
+#   2. 从推好的 release/vX.Y.Z 分支开 PR 并合并（工作流结束时会给出现成链接；
+#      PR 必须由人开——GITHUB_TOKEN 开的 PR 不触发 CI，会被分支保护卡住）
+# 合并进 master 后 release.yml 自动识别 chore(release) 提交、补打 tag、构建并发布。
+#
+# 前置条件：CHANGELOG.md 顶部须有「## 未发布」段落（无可发布内容会在这里被拦下）。
+name: Make Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "要发布的版本号（x.y.z，如 2.5.0）"
+        required: true
+
+permissions:
+  contents: write # push release 分支
+
+concurrency:
+  group: make-release
+  cancel-in-progress: true
+
+jobs:
+  make-release:
+    name: prepare release branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Validate inputs
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "❌ 版本号须为 x.y.z 形式，收到: $VERSION"; exit 1;
+          }
+          head -20 CHANGELOG.md | grep -q '^## 未发布' || {
+            echo "❌ CHANGELOG.md 顶部没有「## 未发布」段落，无可发布内容"; exit 1;
+          }
+          if git ls-remote --tags origin "refs/tags/v$VERSION" | grep -q .; then
+            echo "❌ tag v$VERSION 已存在"; exit 1
+          fi
+
+      - name: Bump versions + sync lockfile
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          scripts/package-skill.sh bump "$VERSION"
+          uv lock
+
+      - name: Finalize CHANGELOG
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          # 把顶部第一个「## 未发布」定版为「## x.y.z (日期)」；release.yml 按此段落抽 notes
+          sed -i "0,/^## 未发布/s|## 未发布|## $VERSION ($(date +%Y-%m-%d))|" CHANGELOG.md
+          echo "--- CHANGELOG 顶部 ---"
+          head -5 CHANGELOG.md
+
+      - name: Run tests (release gate)
+        run: |
+          uv sync --locked
+          uv run python -m py_compile scripts/boss_cdp_raw.py scripts/job_summary.py
+          uv run python -m unittest tests.test_chrome_setup tests.test_job_summary
+
+      - name: Push release branch
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          BRANCH="release/v$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add README.md README.en.md SKILL.md pyproject.toml scripts/boss_cdp_raw.py uv.lock CHANGELOG.md
+          git commit -m "chore(release): $VERSION
+
+          由 make-release 工作流自动生成：版本四处 + uv.lock 对齐、CHANGELOG 定版、全量单测已过。"
+          git push origin "$BRANCH"
+          echo ""
+          echo "✅ 发版分支已就绪: $BRANCH"
+          echo ""
+          echo "下一步（须由账号本人操作，bot 开的 PR 不触发 CI）:"
+          echo "  gh pr create --base master --head $BRANCH --title \"chore(release): $VERSION\" \\"
+          echo "    --body 'make-release 自动定版；合并后 release.yml 自动打 tag 并发布'"
+          echo "  或直接打开: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/master...$BRANCH?expand=1"
+          echo "  合并后 release.yml 自动构建发布 GitHub Release。"
